@@ -26,3 +26,4 @@ Open `http://127.0.0.1:8000/docs` to view the API documentation.
 - `tests/`: Automated tests
 - `data/`: Local data files
 - `logs/`: Application logs
+- My Python backend learning project.
