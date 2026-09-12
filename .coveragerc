@@ -1,0 +1,4 @@
+[run]
+omit =
+    app/database/redis_demo.py
+    app/database/redis_ttl_demo.py

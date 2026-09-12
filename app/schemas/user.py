@@ -1,10 +1,7 @@
+from typing import Optional
+
 from pydantic import BaseModel, ConfigDict, EmailStr
-from pydantic import BaseModel, EmailStr
 
-
-class UserLogin(BaseModel):
-    email: EmailStr
-    password: str
 
 class UserCreate(BaseModel):
     name: str
@@ -12,15 +9,23 @@ class UserCreate(BaseModel):
     password: str
 
 
+class UserUpdate(BaseModel):
+    """更新用户信息。
+
+    version 必填（乐观锁）：客户端必须携带 GET 时拿到的版本号，
+    服务端 WHERE version = ? 条件更新，防止并发互相覆盖。
+    """
+
+    name: Optional[str] = None
+    email: Optional[EmailStr] = None
+    password: Optional[str] = None
+    version: int
+
+
 class UserResponse(BaseModel):
     id: int
     name: str
     email: EmailStr
+    version: int
 
-    model_config = ConfigDict(
-        from_attributes=True
-    )
-
-class TokenResponse(BaseModel):
-    access_token: str
-    token_type: str
+    model_config = ConfigDict(from_attributes=True)

@@ -2,9 +2,16 @@
 __pycache__/
 *.pyc
 
+# Environment files (contains secrets - DO NOT COMMIT)
 .env
+.env.*
+!.env.example
 
 logs/
 
 .vscode/
 .idea/
+
+.coverage
+.pytest_cache/
+htmlcov/
