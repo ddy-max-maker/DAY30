@@ -33,7 +33,7 @@ def test_create_todo_without_token(client):
         "/todos", json={"title": "Unauthorized Todo", "completed": False}
     )
 
-    assert response.status_code == 200
+    assert response.status_code == 401
     body = response.json()
     assert body["code"] == 10001
     assert body["data"] is None
@@ -90,7 +90,7 @@ def test_user_cannot_update_other_users_todo(client, auth_headers):
         headers=bob_headers,
     )
 
-    assert response.status_code == 200
+    assert response.status_code == 403
     body = response.json()
     assert body["code"] == 10001
 
@@ -152,6 +152,6 @@ def test_user_cannot_delete_other_users_todo(client, auth_headers):
 
     response = client.delete(f"/todos/{todo_id}", headers=bob_headers)
 
-    assert response.status_code == 200
+    assert response.status_code == 403
     body = response.json()
     assert body["code"] == 10001

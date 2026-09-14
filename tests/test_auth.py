@@ -110,7 +110,7 @@ def test_invalid_token(client):
         "/todos", headers={"Authorization": "Bearer this-is-not-a-valid-token"}
     )
 
-    assert response.status_code == 200
+    assert response.status_code == 401
     body = response.json()
     assert body["code"] == 10001
     assert body["data"] is None

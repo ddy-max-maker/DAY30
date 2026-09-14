@@ -91,3 +91,39 @@ def auth_headers(client):
         return {"Authorization": f"Bearer {token}"}
 
     return create_headers
+
+
+@pytest.fixture
+def admin_headers(client):
+    """创建 ADMIN 用户并返回认证头。
+
+    注册接口只能创建 USER，ADMIN 通过直接写库创建（模拟内部脚本）。
+    """
+
+    def create_admin_headers(name="Admin", email="admin@example.com", password="12345678"):
+        from app.core.security import hash_password
+        from app.models.user import User, UserRole
+
+        db = TestingSessionLocal()
+        admin = User(
+            name=name,
+            email=email,
+            password_hash=hash_password(password),
+            role=UserRole.ADMIN,
+        )
+        db.add(admin)
+        db.commit()
+        db.refresh(admin)
+        db.close()
+
+        login_response = client.post(
+            "/auth/login", json={"email": email, "password": password}
+        )
+
+        assert login_response.status_code == 200
+        assert login_response.json()["code"] == 0
+
+        token = login_response.json()["data"]["access_token"]
+        return {"Authorization": f"Bearer {token}"}
+
+    return create_admin_headers

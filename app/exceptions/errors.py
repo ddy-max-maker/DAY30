@@ -36,18 +36,28 @@ class AuthError(BusinessError):
 
 
 class TokenInvalidError(BusinessError):
+    """Token 无效或未提供：HTTP 401 Unauthorized。"""
+
     def __init__(self, message: str = "无效的 Token"):
-        super().__init__(message=message, code=10001)
+        super().__init__(message=message, code=10001, status_code=401)
 
 
 class TokenExpiredError(BusinessError):
+    """Token 已过期：HTTP 401 Unauthorized。"""
+
     def __init__(self, message: str = "Token 已过期"):
-        super().__init__(message=message, code=10001)
+        super().__init__(message=message, code=10001, status_code=401)
 
 
 class PermissionDeniedError(BusinessError):
+    """权限不足：已登录但角色不满足要求（如 USER 访问 ADMIN 接口），
+    或尝试操作不属于自己的资源。
+
+    HTTP 403 Forbidden。
+    """
+
     def __init__(self, message: str = "无权限访问"):
-        super().__init__(message=message, code=10001)
+        super().__init__(message=message, code=10001, status_code=403)
 
 
 # ---------- 用户相关 ----------
@@ -75,3 +85,47 @@ class VersionConflictError(BusinessError):
 class TodoNotFoundError(BusinessError):
     def __init__(self, message: str = "Todo 不存在"):
         super().__init__(message=message, code=10003)
+
+
+# ---------- 电商相关 ----------
+class ProductNotFoundError(BusinessError):
+    def __init__(self, message: str = "商品不存在"):
+        super().__init__(message=message, code=10100, status_code=404)
+
+
+class SKUNotFoundError(BusinessError):
+    def __init__(self, message: str = "SKU 不存在"):
+        super().__init__(message=message, code=10101, status_code=404)
+
+
+class SKUNotAvailableError(BusinessError):
+    """SKU 不可销售（已下架或商品已下架）。"""
+
+    def __init__(self, message: str = "商品已下架，无法购买"):
+        super().__init__(message=message, code=10102)
+
+
+class InsufficientStockError(BusinessError):
+    """库存不足，下单失败。"""
+
+    def __init__(self, message: str = "库存不足"):
+        super().__init__(message=message, code=10103)
+
+
+class OrderNotFoundError(BusinessError):
+    def __init__(self, message: str = "订单不存在"):
+        super().__init__(message=message, code=10104, status_code=404)
+
+
+class OrderStatusError(BusinessError):
+    """订单状态不允许当前操作（如已取消的订单不能再取消）。"""
+
+    def __init__(self, message: str = "订单状态不允许此操作"):
+        super().__init__(message=message, code=10105)
+
+
+class OrderNotEmptyError(BusinessError):
+    """下单时订单项为空。"""
+
+    def __init__(self, message: str = "订单不能为空"):
+        super().__init__(message=message, code=10106)

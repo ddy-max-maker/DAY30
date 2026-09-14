@@ -68,7 +68,7 @@ async def http_exception_handler(
 
     message = exc.detail if isinstance(exc.detail, str) and exc.detail else default_msg
 
-    return _json_response(code=code, message=message, status_code=200)
+    return _json_response(code=code, message=message, status_code=exc.status_code)
 
 
 async def validation_exception_handler(
