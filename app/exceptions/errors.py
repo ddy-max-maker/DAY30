@@ -5,7 +5,6 @@
   10000  -> 通用业务错误
   10001  -> 认证/鉴权错误（账号密码、JWT、权限）
   10002  -> 用户相关错误（不存在、邮箱重复）
-  10003  -> Todo 相关错误
   422    -> 参数校验错误（由 RequestValidationError handler 处理）
 """
 
@@ -79,12 +78,6 @@ class VersionConflictError(BusinessError):
 
     def __init__(self, message: str = "数据已被其他请求修改，请刷新后重试"):
         super().__init__(message=message, code=10005, status_code=409)
-
-
-# ---------- Todo 相关 ----------
-class TodoNotFoundError(BusinessError):
-    def __init__(self, message: str = "Todo 不存在"):
-        super().__init__(message=message, code=10003)
 
 
 # ---------- 电商相关 ----------

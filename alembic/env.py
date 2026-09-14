@@ -4,7 +4,7 @@ from sqlalchemy import create_engine
 from sqlalchemy.engine import URL
 from sqlalchemy.pool import NullPool
 
-# 让 User、Todo 等 Model 注册到 Base.metadata
+# 让 User、Order 等 Model 注册到 Base.metadata
 from alembic import context
 from app.core.config import (
     DB_HOST,
@@ -14,7 +14,7 @@ from app.core.config import (
     DB_USER,
 )
 from app.database.database import Base
-from app import models  # noqa: F401  # 导入模型，使 User/Todo 注册到 Base.metadata（autogenerate 依赖）
+from app import models  # noqa: F401  # 导入模型，使全部 ORM Model 注册到 Base.metadata（autogenerate 依赖）
 
 config = context.config
 

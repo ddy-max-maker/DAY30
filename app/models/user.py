@@ -9,7 +9,6 @@ from app.database.database import Base
 
 if TYPE_CHECKING:
     from app.models.order import Order
-    from app.models.todo import Todo
 
 
 class UserRole(enum.Enum):
@@ -44,5 +43,4 @@ class User(Base):
     version: Mapped[int] = mapped_column(
         Integer, nullable=False, default=1, server_default="1"
     )
-    todos: Mapped[list["Todo"]] = relationship("Todo", back_populates="user")
     orders: Mapped[list["Order"]] = relationship("Order", back_populates="user")

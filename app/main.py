@@ -6,7 +6,6 @@ from app.routers.admin import router as admin_router
 from app.routers.auth import router as auth_router
 from app.routers.order import router as order_router
 from app.routers.product import router as product_router
-from app.routers.todo import router as todo_router
 from app.routers.user import router as user_router
 
 from app.exceptions.handlers import (
@@ -45,7 +44,6 @@ app.middleware(
 # ---------- 注册路由 ----------
 app.include_router(auth_router)
 app.include_router(user_router)
-app.include_router(todo_router)
 app.include_router(product_router)
 app.include_router(order_router)
 app.include_router(admin_router)

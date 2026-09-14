@@ -31,4 +31,3 @@ pytest --cov=app
 - `app/schemas/`: Request and response schemas
 - `app/core/`: Configuration and infrastructure
 - `tests/`: Automated tests
-- `examples/`: Standalone database and Redis learning scripts

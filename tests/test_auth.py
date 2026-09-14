@@ -107,7 +107,7 @@ def test_verify_code_cooldown(client):
 
 def test_invalid_token(client):
     response = client.get(
-        "/todos", headers={"Authorization": "Bearer this-is-not-a-valid-token"}
+        "/users/me", headers={"Authorization": "Bearer this-is-not-a-valid-token"}
     )
 
     assert response.status_code == 401
