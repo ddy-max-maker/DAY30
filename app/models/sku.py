@@ -24,14 +24,10 @@ class SKU(Base):
     __tablename__ = "skus"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
-    product_id: Mapped[int] = mapped_column(
-        ForeignKey("products.id"), nullable=False
-    )
+    product_id: Mapped[int] = mapped_column(ForeignKey("products.id"), nullable=False)
     sku_code: Mapped[str] = mapped_column(String(100), nullable=False, unique=True)
     name: Mapped[str] = mapped_column(String(200), nullable=False)
-    price: Mapped[Decimal] = mapped_column(
-        Numeric(10, 2), nullable=False
-    )
+    price: Mapped[Decimal] = mapped_column(Numeric(10, 2), nullable=False)
     status: Mapped[SKUStatus] = mapped_column(
         Enum(SKUStatus, values_callable=lambda x: [e.value for e in x]),
         nullable=False,

@@ -34,9 +34,7 @@ def list_my_orders(
 ) -> ResponseModel[list[OrderResponse]]:
     """查看自己的全部订单。"""
     orders = order_service.get_orders_by_user(db, current_user.id)
-    return ResponseModel(
-        data=[OrderResponse.model_validate(o) for o in orders]
-    )
+    return ResponseModel(data=[OrderResponse.model_validate(o) for o in orders])
 
 
 @router.get("/{order_id}", response_model=ResponseModel[OrderResponse])

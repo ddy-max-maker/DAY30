@@ -114,9 +114,7 @@ def list_all_orders(
     db: DbDep,
 ) -> ResponseModel[list[OrderResponse]]:
     orders = order_service.get_all_orders(db)
-    return ResponseModel(
-        data=[OrderResponse.model_validate(o) for o in orders]
-    )
+    return ResponseModel(data=[OrderResponse.model_validate(o) for o in orders])
 
 
 @router.patch(

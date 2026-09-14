@@ -3,7 +3,6 @@ import random
 
 from app.database.redis import redis_client
 
-
 NULL_CACHE = "__NULL__"
 
 

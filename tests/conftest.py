@@ -100,7 +100,9 @@ def admin_headers(client):
     注册接口只能创建 USER，ADMIN 通过直接写库创建（模拟内部脚本）。
     """
 
-    def create_admin_headers(name="Admin", email="admin@example.com", password="12345678"):
+    def create_admin_headers(
+        name="Admin", email="admin@example.com", password="12345678"
+    ):
         from app.core.security import hash_password
         from app.models.user import User, UserRole
 

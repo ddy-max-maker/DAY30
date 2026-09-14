@@ -43,18 +43,14 @@ class Order(Base):
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     # UUID 业务订单号格式为 ORD + 32 位 hex（共 35 字符），列宽留余量到 64
     order_no: Mapped[str] = mapped_column(String(64), nullable=False, unique=True)
-    user_id: Mapped[int] = mapped_column(
-        ForeignKey("users.id"), nullable=False
-    )
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id"), nullable=False)
     status: Mapped[OrderStatus] = mapped_column(
         Enum(OrderStatus, values_callable=lambda x: [e.value for e in x]),
         nullable=False,
         default=OrderStatus.PENDING,
         server_default="pending",
     )
-    total_amount: Mapped[Decimal] = mapped_column(
-        Numeric(10, 2), nullable=False
-    )
+    total_amount: Mapped[Decimal] = mapped_column(Numeric(10, 2), nullable=False)
     created_at: Mapped[datetime] = mapped_column(
         DateTime, server_default=func.now(), nullable=False
     )

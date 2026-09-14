@@ -6,6 +6,9 @@ from sqlalchemy.pool import NullPool
 
 # 让 User、Order 等 Model 注册到 Base.metadata
 from alembic import context
+from app import (
+    models,  # noqa: F401  # 导入模型，使全部 ORM Model 注册到 Base.metadata（autogenerate 依赖）
+)
 from app.core.config import (
     DB_HOST,
     DB_NAME,
@@ -14,7 +17,6 @@ from app.core.config import (
     DB_USER,
 )
 from app.database.database import Base
-from app import models  # noqa: F401  # 导入模型，使全部 ORM Model 注册到 Base.metadata（autogenerate 依赖）
 
 config = context.config
 

@@ -22,20 +22,11 @@ database_url = URL.create(
 
 
 engine = create_engine(
-    database_url,
-    echo=False,
-
-    pool_size=10,
-
-    max_overflow=20,
-
-    pool_pre_ping=True
+    database_url, echo=False, pool_size=10, max_overflow=20, pool_pre_ping=True
 )
 
 
-SessionLocal = sessionmaker(
-    bind=engine
-)
+SessionLocal = sessionmaker(bind=engine)
 
 
 def get_db() -> Iterator[Session]:

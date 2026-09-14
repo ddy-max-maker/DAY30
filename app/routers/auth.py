@@ -11,7 +11,6 @@ from app.schemas.common import ResponseModel
 from app.schemas.user import UserCreate, UserResponse
 from app.services import auth_service, user_service
 
-
 router = APIRouter(prefix="/auth", tags=["Auth"])
 
 

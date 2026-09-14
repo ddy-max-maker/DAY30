@@ -1,26 +1,19 @@
-from fastapi import FastAPI
+from fastapi import FastAPI, HTTPException
 from fastapi.exceptions import RequestValidationError
-from fastapi import HTTPException
 
+from app.exceptions.errors import BusinessError
+from app.exceptions.handlers import (
+    business_exception_handler,
+    http_exception_handler,
+    unhandled_exception_handler,
+    validation_exception_handler,
+)
+from app.middleware.request_log import request_log_middleware
 from app.routers.admin import router as admin_router
 from app.routers.auth import router as auth_router
 from app.routers.order import router as order_router
 from app.routers.product import router as product_router
 from app.routers.user import router as user_router
-
-from app.exceptions.handlers import (
-    business_exception_handler,
-    http_exception_handler,
-    validation_exception_handler,
-    unhandled_exception_handler,
-)
-
-from app.exceptions.errors import BusinessError
-
-from app.middleware.request_log import (
-    request_log_middleware
-)
-
 
 app = FastAPI(title="Backend Learning API")
 
@@ -35,11 +28,7 @@ def health():
     return {"status": "ok"}
 
 
-app.middleware(
-    "http"
-)(
-    request_log_middleware
-)
+app.middleware("http")(request_log_middleware)
 
 # ---------- 注册路由 ----------
 app.include_router(auth_router)
@@ -60,4 +49,3 @@ app.add_exception_handler(RequestValidationError, validation_exception_handler)
 
 # 兜底：所有未捕获异常
 app.add_exception_handler(Exception, unhandled_exception_handler)
-

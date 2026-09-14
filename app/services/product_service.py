@@ -7,7 +7,7 @@ from sqlalchemy.orm import Session
 from app.exceptions.errors import ProductNotFoundError, SKUNotFoundError
 from app.models.inventory import Inventory
 from app.models.product import Product, ProductStatus
-from app.models.sku import SKU, SKUStatus
+from app.models.sku import SKU
 from app.schemas.product import ProductCreate, ProductUpdate
 from app.schemas.sku import SKUCreate, SKUUpdate
 

@@ -8,9 +8,7 @@ from app.models.inventory import Inventory
 
 
 def get_inventory_by_sku(db: Session, sku_id: int) -> Inventory | None:
-    return db.scalar(
-        select(Inventory).where(Inventory.sku_id == sku_id)
-    )
+    return db.scalar(select(Inventory).where(Inventory.sku_id == sku_id))
 
 
 def update_stock(db: Session, sku_id: int, stock: int) -> Inventory:
@@ -59,9 +57,7 @@ def restore_stock(db: Session, sku_id: int, quantity: int) -> Inventory:
     """取消订单时恢复库存。同样在调用方事务内执行。"""
 
     inventory = db.scalar(
-        select(Inventory)
-        .where(Inventory.sku_id == sku_id)
-        .with_for_update()
+        select(Inventory).where(Inventory.sku_id == sku_id).with_for_update()
     )
     if inventory is None:
         raise SKUNotFoundError(message="SKU 库存记录不存在")

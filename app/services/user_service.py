@@ -1,20 +1,22 @@
 import logging
+
 from redis.exceptions import LockNotOwnedError
 from sqlalchemy import select, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
-from app.database.redis import redis_client
+
 from app.core.security import hash_password
+from app.database.redis import redis_client
+from app.exceptions import BusinessError, VersionConflictError
+from app.exceptions.errors import EmailAlreadyExistsError, UserNotFoundError
 from app.models.user import User
-from app.schemas.user import UserCreate, UserUpdate, UserResponse
+from app.schemas.user import UserCreate, UserResponse, UserUpdate
 from app.services.cache_service import (
+    NULL_CACHE,
+    delete_cache,
     get_cache,
     set_cache,
-    delete_cache,
-    NULL_CACHE,
 )
-from app.exceptions import BusinessError, VersionConflictError
-from app.exceptions.errors import UserNotFoundError,EmailAlreadyExistsError
 
 logger = logging.getLogger(__name__)
 
@@ -23,11 +25,7 @@ def get_all_users(db: Session) -> list[User]:
     return list(db.scalars(select(User)).all())
 
 
-def get_user_by_id(
-    db: Session,
-    user_id: int
-) -> UserResponse | None:
-
+def get_user_by_id(db: Session, user_id: int) -> UserResponse | None:
     """
     Cache Aside
     + 空值缓存防穿透
@@ -65,10 +63,8 @@ def get_user_by_id(
 
     lock = redis_client.lock(
         lock_key,
-
         # 锁本身最多存在 10 秒
         timeout=10,
-
         # 最多等 2 秒抢锁
         blocking_timeout=2,
     )
@@ -84,11 +80,7 @@ def get_user_by_id(
     # =========================
 
     if not acquired:
-
-        logger.warning(
-            "[LOCK TIMEOUT] key=%s",
-            lock_key
-        )
+        logger.warning("[LOCK TIMEOUT] key=%s", lock_key)
 
         # 很重要：
         # 等了2秒后，别人可能已经把缓存建好了
@@ -100,34 +92,22 @@ def get_user_by_id(
             return None
 
         if cache_user is not None:
-            logger.info(
-                "[Cache HIT AFTER LOCK TIMEOUT] key=%s",
-                key
-            )
+            logger.info("[Cache HIT AFTER LOCK TIMEOUT] key=%s", key)
 
-            return UserResponse.model_validate(
-                cache_user
-            )
+            return UserResponse.model_validate(cache_user)
 
         # 等了2秒缓存仍然没有
         # 不继续攻击数据库
         # 直接降级
 
-        raise BusinessError(
-            code=503,
-            message="系统繁忙，请稍后重试"
-        )
+        raise BusinessError(code=503, message="系统繁忙，请稍后重试")
 
     # =========================
     # 5. 成功获得锁
     # =========================
 
     try:
-
-        logger.info(
-            "[LOCK ACQUIRED] key=%s",
-            lock_key
-        )
+        logger.info("[LOCK ACQUIRED] key=%s", lock_key)
 
         # =========================
         # 6. Double Check
@@ -136,31 +116,20 @@ def get_user_by_id(
         cache_user = get_cache(key)
 
         if cache_user == NULL_CACHE:
-            logger.info(
-                "[Cache NULL HIT AFTER LOCK] key=%s",
-                key
-            )
+            logger.info("[Cache NULL HIT AFTER LOCK] key=%s", key)
 
             return None
 
         if cache_user is not None:
-            logger.info(
-                "[Cache HIT AFTER LOCK] key=%s",
-                key
-            )
+            logger.info("[Cache HIT AFTER LOCK] key=%s", key)
 
-            return UserResponse.model_validate(
-                cache_user
-            )
+            return UserResponse.model_validate(cache_user)
 
         # =========================
         # 7. 真正查询 MySQL
         # =========================
 
-        logger.info(
-            "[DB QUERY] user_id=%s",
-            user_id
-        )
+        logger.info("[DB QUERY] user_id=%s", user_id)
 
         user = db.get(User, user_id)
 
@@ -169,24 +138,18 @@ def get_user_by_id(
         # =========================
 
         if user is None:
-
             # 空值缓存：
             # 防止不存在的数据反复穿透数据库
             set_cache(
                 key,
                 NULL_CACHE,
-
                 # 基础60秒
                 expire=60,
-
                 # 随机增加0~30秒
                 jitter=30,
             )
 
-            logger.info(
-                "[Cache NULL SET] key=%s",
-                key
-            )
+            logger.info("[Cache NULL SET] key=%s", key)
 
             return None
 
@@ -194,9 +157,7 @@ def get_user_by_id(
         # 9. ORM → UserResponse
         # =========================
 
-        user_response = UserResponse.model_validate(
-            user
-        )
+        user_response = UserResponse.model_validate(user)
 
         # =========================
         # 10. 回填正常缓存
@@ -205,18 +166,13 @@ def get_user_by_id(
         set_cache(
             key,
             user_response.model_dump(),
-
             # 基础5分钟
             expire=300,
-
             # 随机增加0~60秒
             jitter=60,
         )
 
-        logger.info(
-            "[Cache SET] key=%s",
-            key
-        )
+        logger.info("[Cache SET] key=%s", key)
 
         return user_response
 
@@ -228,24 +184,14 @@ def get_user_by_id(
         try:
             lock.release()
 
-            logger.info(
-                "[LOCK RELEASED] key=%s",
-                lock_key
-            )
+            logger.info("[LOCK RELEASED] key=%s", lock_key)
 
         except LockNotOwnedError:
-
-            logger.warning(
-                "[LOCK EXPIRED OR LOST] key=%s",
-                lock_key
-            )
+            logger.warning("[LOCK EXPIRED OR LOST] key=%s", lock_key)
 
 
-
-
-def create_user(#创建用户
-    db: Session,
-    user_data: UserCreate
+def create_user(  # 创建用户
+    db: Session, user_data: UserCreate
 ) -> User:
 
     new_user = User(
@@ -266,7 +212,7 @@ def create_user(#创建用户
     except IntegrityError:
         db.rollback()
 
-        raise EmailAlreadyExistsError()
+        raise EmailAlreadyExistsError() from None
 
 
 def get_user_by_email(db: Session, email: str) -> User | None:
@@ -351,7 +297,10 @@ def update_user(db: Session, user_id: int, update_data: UserUpdate) -> UserRespo
         delete_cache(cache_key)
         logger.info("[Cache DEL] key=%s (after update)", cache_key)
     except Exception:
-        logger.exception("[Cache DEL FAILED] key=%s, DB 已更新但缓存未能删除，依赖 TTL 最终一致", cache_key)
+        logger.exception(
+            "[Cache DEL FAILED] key=%s, DB 已更新但缓存未能删除，依赖 TTL 最终一致",
+            cache_key,
+        )
 
     # =========================
     # 5. 重新查询最新数据（version 已 +1）
@@ -359,4 +308,3 @@ def update_user(db: Session, user_id: int, update_data: UserUpdate) -> UserRespo
     db.refresh(user)
 
     return UserResponse.model_validate(user)
-

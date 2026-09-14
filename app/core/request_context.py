@@ -1,11 +1,7 @@
-from contextvars import ContextVar
 import uuid
+from contextvars import ContextVar
 
-
-request_id_context = ContextVar(
-    "request_id",
-    default=""
-)
+request_id_context = ContextVar("request_id", default="")
 
 
 def generate_request_id():

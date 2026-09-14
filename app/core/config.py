@@ -2,12 +2,10 @@ import os
 
 from pydantic_settings import BaseSettings
 
-
 ENV_FILE = f".env.{os.getenv('APP_ENV', 'dev')}"
 
 
 class Settings(BaseSettings):
-
     APP_ENV: str = "development"
 
     DB_HOST: str
@@ -20,13 +18,11 @@ class Settings(BaseSettings):
 
     DB_NAME: str
 
-
     SECRET_KEY: str
 
     ALGORITHM: str = "HS256"
 
     ACCESS_TOKEN_EXPIRE_MINUTES: int = 30
-
 
     REDIS_HOST: str = "127.0.0.1"
 
@@ -34,11 +30,9 @@ class Settings(BaseSettings):
 
     REDIS_DB: int = 0
 
-
     class Config:
         env_file = ENV_FILE
         extra = "ignore"
-
 
 
 settings = Settings()

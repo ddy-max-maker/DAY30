@@ -1,6 +1,11 @@
 [tool.ruff]
 line-length = 88
 target-version = "py311"
+# 历史迁移文件属于已执行的数据库变更记录，不参与日常 lint / format。
+# alembic/env.py 仍正常受检查。
+exclude = [
+    "alembic/versions",
+]
 
 [tool.ruff.lint]
 select = ["B", "E", "F", "I"]

@@ -50,4 +50,3 @@ def update_user(
 ) -> ResponseModel[UserResponse]:
     user = user_service.update_user(db, user_id, update_data)
     return ResponseModel(data=user)
-

@@ -20,19 +20,11 @@ class OrderItem(Base):
     __tablename__ = "order_items"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
-    order_id: Mapped[int] = mapped_column(
-        ForeignKey("orders.id"), nullable=False
-    )
-    sku_id: Mapped[int] = mapped_column(
-        ForeignKey("skus.id"), nullable=False
-    )
+    order_id: Mapped[int] = mapped_column(ForeignKey("orders.id"), nullable=False)
+    sku_id: Mapped[int] = mapped_column(ForeignKey("skus.id"), nullable=False)
     sku_name: Mapped[str] = mapped_column(String(200), nullable=False)
-    unit_price: Mapped[Decimal] = mapped_column(
-        Numeric(10, 2), nullable=False
-    )
+    unit_price: Mapped[Decimal] = mapped_column(Numeric(10, 2), nullable=False)
     quantity: Mapped[int] = mapped_column(Integer, nullable=False)
-    subtotal: Mapped[Decimal] = mapped_column(
-        Numeric(10, 2), nullable=False
-    )
+    subtotal: Mapped[Decimal] = mapped_column(Numeric(10, 2), nullable=False)
 
     order: Mapped["Order"] = relationship("Order", back_populates="items")

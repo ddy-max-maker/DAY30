@@ -7,7 +7,6 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.exceptions.errors import (
-    InsufficientStockError,
     OrderNotFoundError,
     OrderStatusError,
     SKUNotAvailableError,
@@ -15,11 +14,10 @@ from app.exceptions.errors import (
 )
 from app.models.order import Order, OrderStatus
 from app.models.order_item import OrderItem
-from app.models.sku import SKU, SKUStatus
 from app.models.product import ProductStatus
+from app.models.sku import SKU, SKUStatus
 from app.schemas.order import OrderCreate, OrderStatusUpdate
 from app.services.inventory_service import deduct_stock, restore_stock
-
 
 # 管理员订单状态机：key 为当前状态，value 为允许流转到的状态集合。
 # CANCELLED / COMPLETED 是终态；PAID 暂不允许取消（退款功能未实现）。
@@ -61,19 +59,13 @@ def create_order(db: Session, user_id: int, data: OrderCreate) -> Order:
     try:
         for item_request in data.items:
             # --- 1. 校验 SKU 存在 ---
-            sku = db.scalar(
-                select(SKU).where(SKU.id == item_request.sku_id)
-            )
+            sku = db.scalar(select(SKU).where(SKU.id == item_request.sku_id))
             if sku is None:
-                raise SKUNotFoundError(
-                    message=f"SKU(id={item_request.sku_id}) 不存在"
-                )
+                raise SKUNotFoundError(message=f"SKU(id={item_request.sku_id}) 不存在")
 
             # --- 2. 校验可销售（SKU 和 Product 状态都要检查）---
             if sku.status != SKUStatus.ACTIVE:
-                raise SKUNotAvailableError(
-                    message=f"SKU {sku.sku_code} 已停售"
-                )
+                raise SKUNotAvailableError(message=f"SKU {sku.sku_code} 已停售")
             if sku.product is None or sku.product.status != ProductStatus.ON_SALE:
                 raise SKUNotAvailableError(
                     message=f"商品 {sku.product.name if sku.product else ''} 已下架"
@@ -120,9 +112,7 @@ def create_order(db: Session, user_id: int, data: OrderCreate) -> Order:
 
 
 # ================ 查询订单 ================
-def get_orders_by_user(
-    db: Session, user_id: int
-) -> list[Order]:
+def get_orders_by_user(db: Session, user_id: int) -> list[Order]:
     return list(
         db.scalars(
             select(Order)
@@ -137,11 +127,7 @@ def get_order_by_id(db: Session, order_id: int) -> Order | None:
 
 
 def get_all_orders(db: Session) -> list[Order]:
-    return list(
-        db.scalars(
-            select(Order).order_by(Order.created_at.desc())
-        ).all()
-    )
+    return list(db.scalars(select(Order).order_by(Order.created_at.desc())).all())
 
 
 # ================ 取消订单 ================
@@ -158,9 +144,7 @@ def cancel_order(db: Session, order_id: int, user_id: int) -> Order:
     """
     try:
         # --- 1. 锁定订单行（必须在检查状态之前）---
-        order = db.scalar(
-            select(Order).where(Order.id == order_id).with_for_update()
-        )
+        order = db.scalar(select(Order).where(Order.id == order_id).with_for_update())
         if order is None:
             raise OrderNotFoundError()
 
@@ -187,9 +171,7 @@ def cancel_order(db: Session, order_id: int, user_id: int) -> Order:
 
 
 # ================ 管理员修改订单状态 ================
-def update_order_status(
-    db: Session, order_id: int, data: OrderStatusUpdate
-) -> Order:
+def update_order_status(db: Session, order_id: int, data: OrderStatusUpdate) -> Order:
     order = db.get(Order, order_id)
     if order is None:
         raise OrderNotFoundError()

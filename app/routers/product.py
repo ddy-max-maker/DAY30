@@ -29,9 +29,7 @@ def list_products(
 ) -> ResponseModel[list[ProductResponse]]:
     """浏览在售商品列表（不含下架商品）。"""
     products = product_service.get_products(db, only_on_sale=True)
-    return ResponseModel(
-        data=[ProductResponse.model_validate(p) for p in products]
-    )
+    return ResponseModel(data=[ProductResponse.model_validate(p) for p in products])
 
 
 @router.get("/{product_id}", response_model=ResponseModel[ProductDetailResponse])

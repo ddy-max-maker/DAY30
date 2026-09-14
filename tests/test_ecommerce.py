@@ -2,7 +2,6 @@
 
 import pytest
 
-from app.database.redis import redis_client
 from tests.conftest import TestingSessionLocal
 
 
@@ -134,8 +133,9 @@ def test_user_can_view_products(client, auth_headers, admin_headers):
 
 
 # ================ 下单测试 ================
-def _create_product_with_sku(client, admin, name="TestProduct", sku_code="TEST-SKU",
-                              price="99.00", stock=10):
+def _create_product_with_sku(
+    client, admin, name="TestProduct", sku_code="TEST-SKU", price="99.00", stock=10
+):
     """辅助：管理员创建商品 + SKU，返回 (product_id, sku_id)。
 
     admin 参数是已创建好的 admin headers（避免重复创建 admin 用户）。
@@ -202,7 +202,9 @@ def test_insufficient_stock_cannot_order(client, auth_headers, admin_headers):
 def test_stock_reduced_after_order(client, auth_headers, admin_headers):
     """9. 下单成功后库存正确减少。"""
     admin = admin_headers()
-    _, sku_id = _create_product_with_sku(client, admin, "Doohickey", "D-001", "20.00", 20)
+    _, sku_id = _create_product_with_sku(
+        client, admin, "Doohickey", "D-001", "20.00", 20
+    )
     headers = auth_headers()
 
     # 下单 3 个
@@ -214,7 +216,9 @@ def test_stock_reduced_after_order(client, auth_headers, admin_headers):
 
     # 直接查 DB 验证库存
     from sqlalchemy import select as sa_select
+
     from app.models.inventory import Inventory
+
     db = TestingSessionLocal()
     inv = db.scalar(sa_select(Inventory).where(Inventory.sku_id == sku_id))
     db.close()
@@ -257,7 +261,9 @@ def test_user_can_only_see_own_orders(client, auth_headers):
 def test_user_cannot_view_other_users_order(client, auth_headers, admin_headers):
     """12. 用户不能通过 order_id 查看其他用户订单（返回 404）。"""
     admin = admin_headers()
-    _, sku_id = _create_product_with_sku(client, admin, "Thingamajig", "T-001", "5.00", 10)
+    _, sku_id = _create_product_with_sku(
+        client, admin, "Thingamajig", "T-001", "5.00", 10
+    )
     alice = auth_headers(name="Alice", email="alice@example.com")
     bob = auth_headers(name="Bob", email="bob@example.com")
 
@@ -278,7 +284,9 @@ def test_user_cannot_view_other_users_order(client, auth_headers, admin_headers)
 def test_cancel_order(client, auth_headers, admin_headers):
     """13. 取消订单逻辑正确（PENDING 可取消，取消后库存恢复）。"""
     admin = admin_headers()
-    _, sku_id = _create_product_with_sku(client, admin, "Whatchamacallit", "W-001", "30.00", 10)
+    _, sku_id = _create_product_with_sku(
+        client, admin, "Whatchamacallit", "W-001", "30.00", 10
+    )
     headers = auth_headers()
 
     # 下单 2 个
@@ -296,7 +304,9 @@ def test_cancel_order(client, auth_headers, admin_headers):
 
     # 库存恢复
     from sqlalchemy import select as sa_select
+
     from app.models.inventory import Inventory
+
     db = TestingSessionLocal()
     inv = db.scalar(sa_select(Inventory).where(Inventory.sku_id == sku_id))
     db.close()
@@ -306,7 +316,9 @@ def test_cancel_order(client, auth_headers, admin_headers):
 def test_cancel_non_pending_order_fails(client, auth_headers, admin_headers):
     """已取消的订单不能再取消。"""
     admin = admin_headers()
-    _, sku_id = _create_product_with_sku(client, admin, "Gadget2", "G2-001", "10.00", 10)
+    _, sku_id = _create_product_with_sku(
+        client, admin, "Gadget2", "G2-001", "10.00", 10
+    )
     headers = auth_headers()
 
     order_resp = client.post(
@@ -325,7 +337,9 @@ def test_cancel_non_pending_order_fails(client, auth_headers, admin_headers):
     assert response.json()["code"] == 10105  # OrderStatusError
 
 
-def test_transaction_rollback_on_insufficient_stock(client, auth_headers, admin_headers):
+def test_transaction_rollback_on_insufficient_stock(
+    client, auth_headers, admin_headers
+):
     """14. 创建订单过程中库存不足时事务回滚（前面已扣的库存恢复）。
 
     场景：两个 SKU 在同一订单中，第一个库存够，第二个不够。
@@ -355,7 +369,9 @@ def test_transaction_rollback_on_insufficient_stock(client, auth_headers, admin_
 
     # 验证第一个 SKU 的库存没被扣（事务回滚）
     from sqlalchemy import select as sa_select
+
     from app.models.inventory import Inventory
+
     db = TestingSessionLocal()
     inv1 = db.scalar(sa_select(Inventory).where(Inventory.sku_id == sku1_id))
     db.close()
@@ -365,7 +381,9 @@ def test_transaction_rollback_on_insufficient_stock(client, auth_headers, admin_
 def test_admin_can_manage_orders(client, admin_headers, auth_headers):
     """管理员可以查看全部订单和修改订单状态。"""
     admin = admin_headers()
-    _, sku_id = _create_product_with_sku(client, admin, "AdminOrder", "AO-001", "15.00", 10)
+    _, sku_id = _create_product_with_sku(
+        client, admin, "AdminOrder", "AO-001", "15.00", 10
+    )
     user = auth_headers()
 
     # 用户下单
@@ -423,7 +441,9 @@ def test_off_sale_product_not_visible(client, auth_headers, admin_headers):
 def test_order_no_is_uuid_based(client, auth_headers, admin_headers):
     """订单号为 ORD + 32 位 UUID hex（共 35 字符）。"""
     admin = admin_headers()
-    _, sku_id = _create_product_with_sku(client, admin, "UUIDOrder", "UO-001", "1.00", 5)
+    _, sku_id = _create_product_with_sku(
+        client, admin, "UUIDOrder", "UO-001", "1.00", 5
+    )
     headers = auth_headers()
 
     resp = client.post(
@@ -442,7 +462,9 @@ def test_order_no_is_uuid_based(client, auth_headers, admin_headers):
 def test_duplicate_cancel_restores_stock_once(client, auth_headers, admin_headers):
     """同一订单重复取消：第二次报状态错误，库存只恢复一次。"""
     admin = admin_headers()
-    _, sku_id = _create_product_with_sku(client, admin, "DupCancel", "DC-001", "10.00", 10)
+    _, sku_id = _create_product_with_sku(
+        client, admin, "DupCancel", "DC-001", "10.00", 10
+    )
     headers = auth_headers()
 
     resp = client.post(
@@ -462,7 +484,9 @@ def test_duplicate_cancel_restores_stock_once(client, auth_headers, admin_header
 
     # 库存只恢复一次：10（原始）而不是 12（重复恢复）
     from sqlalchemy import select as sa_select
+
     from app.models.inventory import Inventory
+
     db = TestingSessionLocal()
     inv = db.scalar(sa_select(Inventory).where(Inventory.sku_id == sku_id))
     db.close()
@@ -522,7 +546,9 @@ def test_concurrent_cancel_restores_stock_once(client, auth_headers, admin_heade
 
     # 库存只恢复一次
     from sqlalchemy import select as sa_select
+
     from app.models.inventory import Inventory
+
     db = TestingSessionLocal()
     inv = db.scalar(sa_select(Inventory).where(Inventory.sku_id == sku_id))
     db.close()
@@ -575,27 +601,37 @@ def test_valid_order_status_chain(client, auth_headers, admin_headers):
     # 正向履约链
     _, sku1 = _create_product_with_sku(client, admin, "Chain1", "CH-001", "1.00", 5)
     order_id = _create_pending_order(client, admin, user, sku1)
-    assert _admin_set_status(client, admin, order_id, "paid").json()["data"]["status"] == "paid"
-    assert _admin_set_status(client, admin, order_id, "shipped").json()["data"]["status"] == "shipped"
-    assert _admin_set_status(client, admin, order_id, "completed").json()["data"]["status"] == "completed"
+    assert (
+        _admin_set_status(client, admin, order_id, "paid").json()["data"]["status"]
+        == "paid"
+    )
+    assert (
+        _admin_set_status(client, admin, order_id, "shipped").json()["data"]["status"]
+        == "shipped"
+    )
+    assert (
+        _admin_set_status(client, admin, order_id, "completed").json()["data"]["status"]
+        == "completed"
+    )
 
     # PENDING → CANCELLED
     _, sku2 = _create_product_with_sku(client, admin, "Chain2", "CH-002", "1.00", 5)
     order_id2 = _create_pending_order(client, admin, user, sku2)
-    assert _admin_set_status(client, admin, order_id2, "cancelled").json()["data"]["status"] == "cancelled"
+    resp = _admin_set_status(client, admin, order_id2, "cancelled")
+    assert resp.json()["data"]["status"] == "cancelled"
 
 
 @pytest.mark.parametrize(
     "source_status, illegal_target",
     [
-        ("pending", "completed"),    # 不能跳级
-        ("pending", "shipped"),       # 不能跳级
-        ("paid", "cancelled"),        # 退款未实现，不允许支付后取消
-        ("paid", "pending"),          # 不能回退
-        ("shipped", "paid"),          # 不能回退
-        ("shipped", "pending"),       # 不能回退
-        ("cancelled", "paid"),        # 终态
-        ("completed", "shipped"),     # 终态
+        ("pending", "completed"),  # 不能跳级
+        ("pending", "shipped"),  # 不能跳级
+        ("paid", "cancelled"),  # 退款未实现，不允许支付后取消
+        ("paid", "pending"),  # 不能回退
+        ("shipped", "paid"),  # 不能回退
+        ("shipped", "pending"),  # 不能回退
+        ("cancelled", "paid"),  # 终态
+        ("completed", "shipped"),  # 终态
     ],
 )
 def test_illegal_order_status_transitions(
@@ -605,8 +641,12 @@ def test_illegal_order_status_transitions(
     admin = admin_headers()
     user = auth_headers()
     _, sku_id = _create_product_with_sku(
-        client, admin, f"Illegal-{source_status}-{illegal_target}",
-        f"IL-{source_status[:2]}-{illegal_target[:2]}", "1.00", 5
+        client,
+        admin,
+        f"Illegal-{source_status}-{illegal_target}",
+        f"IL-{source_status[:2]}-{illegal_target[:2]}",
+        "1.00",
+        5,
     )
 
     order_id = _order_at_status(client, admin, user, sku_id, source_status)
