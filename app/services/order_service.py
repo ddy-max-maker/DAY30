@@ -3,7 +3,7 @@
 import uuid
 from decimal import Decimal
 
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from app.exceptions.errors import (
@@ -122,12 +122,46 @@ def get_orders_by_user(db: Session, user_id: int) -> list[Order]:
     )
 
 
+def get_orders_by_user_page(
+    db: Session, user_id: int, page: int, page_size: int
+) -> tuple[list[Order], int]:
+    """分页查询某用户的订单（按创建时间倒序）。
+
+    返回 (当前页订单列表, 该用户订单总数)。
+    """
+    base = select(Order).where(Order.user_id == user_id)
+    total = db.scalar(select(func.count()).select_from(base.subquery()))
+
+    offset = (page - 1) * page_size
+    stmt = base.order_by(Order.created_at.desc()).limit(page_size).offset(offset)
+    items = list(db.scalars(stmt).all())
+
+    return items, total
+
+
 def get_order_by_id(db: Session, order_id: int) -> Order | None:
     return db.get(Order, order_id)
 
 
 def get_all_orders(db: Session) -> list[Order]:
     return list(db.scalars(select(Order).order_by(Order.created_at.desc())).all())
+
+
+def get_all_orders_page(
+    db: Session, page: int, page_size: int
+) -> tuple[list[Order], int]:
+    """分页查询全部订单（按创建时间倒序）。供管理员使用。
+
+    返回 (当前页订单列表, 订单总数)。
+    """
+    base = select(Order)
+    total = db.scalar(select(func.count()).select_from(base.subquery()))
+
+    offset = (page - 1) * page_size
+    stmt = base.order_by(Order.created_at.desc()).limit(page_size).offset(offset)
+    items = list(db.scalars(stmt).all())
+
+    return items, total
 
 
 # ================ 取消订单 ================

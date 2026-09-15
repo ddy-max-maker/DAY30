@@ -1,15 +1,16 @@
 """普通用户订单接口：下单、查询、取消。"""
 
+import math
 from typing import Annotated
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, Query
 from sqlalchemy.orm import Session
 
 from app.database.database import get_db
 from app.dependencies.auth import get_current_user
 from app.exceptions.errors import OrderNotFoundError
 from app.models.user import User
-from app.schemas.common import ResponseModel
+from app.schemas.common import PageResponse, ResponseModel
 from app.schemas.order import OrderCreate, OrderResponse
 from app.services import order_service
 
@@ -27,14 +28,27 @@ def create_order(
     return ResponseModel(data=OrderResponse.model_validate(order))
 
 
-@router.get("", response_model=ResponseModel[list[OrderResponse]])
+@router.get("", response_model=ResponseModel[PageResponse[OrderResponse]])
 def list_my_orders(
     current_user: Annotated[User, Depends(get_current_user)],
     db: Annotated[Session, Depends(get_db)],
-) -> ResponseModel[list[OrderResponse]]:
-    """查看自己的全部订单。"""
-    orders = order_service.get_orders_by_user(db, current_user.id)
-    return ResponseModel(data=[OrderResponse.model_validate(o) for o in orders])
+    page: Annotated[int, Query(ge=1)] = 1,
+    page_size: Annotated[int, Query(ge=1, le=100)] = 20,
+) -> ResponseModel[PageResponse[OrderResponse]]:
+    """查看自己的全部订单（分页）。"""
+    items, total = order_service.get_orders_by_user_page(
+        db, current_user.id, page=page, page_size=page_size
+    )
+    total_pages = math.ceil(total / page_size) if total > 0 else 0
+    return ResponseModel(
+        data=PageResponse(
+            items=[OrderResponse.model_validate(o) for o in items],
+            page=page,
+            page_size=page_size,
+            total=total,
+            total_pages=total_pages,
+        )
+    )
 
 
 @router.get("/{order_id}", response_model=ResponseModel[OrderResponse])

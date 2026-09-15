@@ -1,6 +1,6 @@
 """商品 & SKU 业务逻辑。"""
 
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
@@ -30,6 +30,32 @@ def get_products(db: Session, only_on_sale: bool = False) -> list[Product]:
     if only_on_sale:
         stmt = stmt.where(Product.status == ProductStatus.ON_SALE)
     return list(db.scalars(stmt).all())
+
+
+def get_products_page(
+    db: Session,
+    page: int,
+    page_size: int,
+    only_on_sale: bool = False,
+) -> tuple[list[Product], int]:
+    """分页查询商品。
+
+    返回 (当前页商品列表, 总记录数)。
+    使用 LIMIT / OFFSET 在数据库层分页，禁止全量查询后 Python 切片。
+    """
+    base = select(Product)
+    if only_on_sale:
+        base = base.where(Product.status == ProductStatus.ON_SALE)
+
+    # 总数
+    total = db.scalar(select(func.count()).select_from(base.subquery()))
+
+    # 当前页数据：按 id 升序，LIMIT / OFFSET
+    offset = (page - 1) * page_size
+    stmt = base.order_by(Product.id).limit(page_size).offset(offset)
+    items = list(db.scalars(stmt).all())
+
+    return items, total
 
 
 def update_product(db: Session, product_id: int, data: ProductUpdate) -> Product:

@@ -1,17 +1,25 @@
 """管理员接口：商品 / SKU / 库存 / 订单管理。
 
 所有接口统一使用 /admin 前缀，需要 ADMIN 角色（require_admin 依赖）。
+
+分页接口示例：
+
+    GET /admin/orders?page=2&page_size=50
+
+非法分页参数（page=0, page_size=0, page_size=101）会由 FastAPI/Pydantic
+直接返回 422 校验错误，不会被静默修正。
 """
 
+import math
 from typing import Annotated
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, Query
 from sqlalchemy.orm import Session
 
 from app.database.database import get_db
 from app.dependencies.auth import require_admin
 from app.models.user import User
-from app.schemas.common import ResponseModel
+from app.schemas.common import PageResponse, ResponseModel
 from app.schemas.inventory import InventoryResponse, InventoryUpdate
 from app.schemas.order import OrderResponse, OrderStatusUpdate
 from app.schemas.product import (
@@ -108,13 +116,25 @@ def update_inventory(
 
 
 # ================ 订单管理 ================
-@router.get("/orders", response_model=ResponseModel[list[OrderResponse]])
+@router.get("/orders", response_model=ResponseModel[PageResponse[OrderResponse]])
 def list_all_orders(
     admin: AdminDep,
     db: DbDep,
-) -> ResponseModel[list[OrderResponse]]:
-    orders = order_service.get_all_orders(db)
-    return ResponseModel(data=[OrderResponse.model_validate(o) for o in orders])
+    page: Annotated[int, Query(ge=1)] = 1,
+    page_size: Annotated[int, Query(ge=1, le=100)] = 20,
+) -> ResponseModel[PageResponse[OrderResponse]]:
+    """管理员查看全部订单（分页）。"""
+    items, total = order_service.get_all_orders_page(db, page=page, page_size=page_size)
+    total_pages = math.ceil(total / page_size) if total > 0 else 0
+    return ResponseModel(
+        data=PageResponse(
+            items=[OrderResponse.model_validate(o) for o in items],
+            page=page,
+            page_size=page_size,
+            total=total,
+            total_pages=total_pages,
+        )
+    )
 
 
 @router.patch(
