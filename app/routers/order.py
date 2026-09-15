@@ -64,7 +64,7 @@ def cancel_my_order(
 
 
 @router.post("/{order_id}/pay", response_model=ResponseModel[OrderResponse])
-def pay_my_order(
+async def pay_my_order(
     order_id: int,
     current_user: Annotated[User, Depends(get_current_user)],
     db: Annotated[Session, Depends(get_db)],
@@ -73,6 +73,9 @@ def pay_my_order(
 
     不接入真实支付网关，只做状态流转校验和更新。
     非自己的订单返回 404（不泄露订单存在性）。
+
+    支付事务提交成功后异步发布 order.paid 事件；
+    MQ 故障不影响支付结果（service 层记录 error 日志）。
     """
-    order = order_service.pay_order(db, order_id, current_user.id)
+    order = await order_service.pay_order_and_publish(db, order_id, current_user.id)
     return ResponseModel(data=OrderResponse.model_validate(order))

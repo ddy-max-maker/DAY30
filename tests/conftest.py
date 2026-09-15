@@ -1,6 +1,8 @@
 import os
 
 os.environ["REDIS_DB"] = "15"
+# 测试不连接真实 RabbitMQ：lifespan 跳过 MQ 初始化，事件通过 mock 验证
+os.environ["RABBITMQ_ENABLED"] = "false"
 
 import pytest
 from fastapi.testclient import TestClient

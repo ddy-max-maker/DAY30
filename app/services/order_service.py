@@ -1,8 +1,10 @@
 """订单业务逻辑：下单事务、查询、取消、支付。"""
 
+import logging
 import uuid
 from decimal import Decimal
 
+from fastapi.concurrency import run_in_threadpool
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
@@ -15,9 +17,12 @@ from app.models.order import Order, OrderStatus
 from app.models.order_item import OrderItem
 from app.models.product import ProductStatus
 from app.models.sku import SKU, SKUStatus
+from app.mq.publisher import publish_order_paid_event
 from app.schemas.order import OrderCreate, OrderStatusUpdate
 from app.services.inventory_service import deduct_stock, restore_stock
 from app.services.order_state_machine import validate_transition
+
+logger = logging.getLogger("backend")
 
 
 def generate_order_no() -> str:
@@ -202,3 +207,30 @@ def pay_order(db: Session, order_id: int, user_id: int) -> Order:
     except Exception:
         db.rollback()
         raise
+
+
+async def pay_order_and_publish(db: Session, order_id: int, user_id: int) -> Order:
+    """支付订单，并在数据库事务提交成功后发布 order.paid 事件。
+
+    为什么拆成"同步事务 + 异步发消息"两段：
+    - DB 部分使用同步 SQLAlchemy（含 SELECT ... FOR UPDATE 行锁），
+      通过 run_in_threadpool 放到线程池，避免阻塞 asyncio 事件循环；
+    - MQ 部分使用 aio-pika 全异步，必须在 commit 之后才发送，
+      杜绝"消息已消费但事务回滚"的不一致。
+
+    MQ 发送失败只记录 error 日志，不影响支付结果：
+    DB 事务与 MQ 不是同一事务（本阶段不实现 Outbox/事务消息）。
+    """
+    order = await run_in_threadpool(pay_order, db, order_id, user_id)
+
+    try:
+        await publish_order_paid_event(order.id, order.user_id)
+    except Exception:
+        logger.error(
+            "publish_order_paid_failed order_id=%s user_id=%s",
+            order.id,
+            order.user_id,
+            exc_info=True,
+        )
+
+    return order
