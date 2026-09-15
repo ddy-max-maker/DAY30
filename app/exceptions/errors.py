@@ -6,6 +6,18 @@
   10001  -> 认证/鉴权错误（账号密码、JWT、权限）
   10002  -> 用户相关错误（不存在、邮箱重复）
   422    -> 参数校验错误（由 RequestValidationError handler 处理）
+  50000  -> 服务器内部错误（未捕获异常）
+
+HTTP status code 语义：
+  400 Bad Request          —— 客户端请求参数/语义错误（如空订单）
+  401 Unauthorized          —— 未认证 / 认证失败
+  403 Forbidden             —— 已认证但无权限
+  404 Not Found             —— 资源不存在
+  409 Conflict              —— 资源/状态冲突（邮箱重复、库存不足、订单状态不允许）
+  422 Unprocessable Entity  —— 参数校验失败（Pydantic 层）
+  500 Internal Server Error —— 服务端未捕获异常
+
+HTTP status 反映协议层结果，body.code 是业务层细分码，两者独立。
 """
 
 
@@ -13,15 +25,15 @@ class BusinessError(Exception):
     """统一业务异常基类。Service / Router 层都应该抛这个，
     由 handler 统一转换成 {code, message, data}。
 
-    status_code: HTTP 状态码，默认 200（业务码语义）；
-    需要真实 HTTP 错误码的异常（如乐观锁 409）可覆盖。
+    status_code: HTTP 状态码，默认 400（Bad Request），
+    子类应按语义显式覆盖（401/403/404/409 等）。
     """
 
     def __init__(
         self,
         message: str = "业务异常",
         code: int = 10000,
-        status_code: int = 200,
+        status_code: int = 400,
     ):
         self.code = code
         self.message = message
@@ -30,8 +42,10 @@ class BusinessError(Exception):
 
 # ---------- 认证相关 ----------
 class AuthError(BusinessError):
+    """账号或密码错误：HTTP 401 Unauthorized。"""
+
     def __init__(self, message: str = "账号或密码错误"):
-        super().__init__(message=message, code=10001)
+        super().__init__(message=message, code=10001, status_code=401)
 
 
 class TokenInvalidError(BusinessError):
@@ -61,13 +75,17 @@ class PermissionDeniedError(BusinessError):
 
 # ---------- 用户相关 ----------
 class UserNotFoundError(BusinessError):
+    """用户不存在：HTTP 404 Not Found。"""
+
     def __init__(self, message: str = "用户不存在"):
-        super().__init__(message=message, code=10002)
+        super().__init__(message=message, code=10002, status_code=404)
 
 
 class EmailAlreadyExistsError(BusinessError):
+    """邮箱已存在（注册冲突）：HTTP 409 Conflict。"""
+
     def __init__(self, message: str = "邮箱已存在"):
-        super().__init__(message=message, code=10002)
+        super().__init__(message=message, code=10002, status_code=409)
 
 
 class VersionConflictError(BusinessError):
@@ -82,43 +100,58 @@ class VersionConflictError(BusinessError):
 
 # ---------- 电商相关 ----------
 class ProductNotFoundError(BusinessError):
+    """商品不存在：HTTP 404 Not Found。"""
+
     def __init__(self, message: str = "商品不存在"):
         super().__init__(message=message, code=10100, status_code=404)
 
 
 class SKUNotFoundError(BusinessError):
+    """SKU 不存在：HTTP 404 Not Found。"""
+
     def __init__(self, message: str = "SKU 不存在"):
         super().__init__(message=message, code=10101, status_code=404)
 
 
 class SKUNotAvailableError(BusinessError):
-    """SKU 不可销售（已下架或商品已下架）。"""
+    """SKU 不可销售（已下架或商品已下架）。
+
+    下单时遇到=请求与当前资源状态冲突：HTTP 409 Conflict。
+    """
 
     def __init__(self, message: str = "商品已下架，无法购买"):
-        super().__init__(message=message, code=10102)
+        super().__init__(message=message, code=10102, status_code=409)
 
 
 class InsufficientStockError(BusinessError):
-    """库存不足，下单失败。"""
+    """库存不足，下单失败。
+
+    请求与可用库存冲突：HTTP 409 Conflict。
+    """
 
     def __init__(self, message: str = "库存不足"):
-        super().__init__(message=message, code=10103)
+        super().__init__(message=message, code=10103, status_code=409)
 
 
 class OrderNotFoundError(BusinessError):
+    """订单不存在：HTTP 404 Not Found。"""
+
     def __init__(self, message: str = "订单不存在"):
         super().__init__(message=message, code=10104, status_code=404)
 
 
 class OrderStatusError(BusinessError):
-    """订单状态不允许当前操作（如已取消的订单不能再取消）。"""
+    """订单状态不允许当前操作（如已取消的订单不能再取消）。
+
+    请求与订单当前状态冲突：HTTP 409 Conflict。
+    """
 
     def __init__(self, message: str = "订单状态不允许此操作"):
-        super().__init__(message=message, code=10105)
+        super().__init__(message=message, code=10105, status_code=409)
 
 
 class OrderNotEmptyError(BusinessError):
-    """下单时订单项为空。"""
+    """下单时订单项为空：HTTP 400 Bad Request。"""
 
     def __init__(self, message: str = "订单不能为空"):
-        super().__init__(message=message, code=10106)
+        super().__init__(message=message, code=10106, status_code=400)

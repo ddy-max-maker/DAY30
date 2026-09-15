@@ -127,9 +127,10 @@ def test_user_can_view_products(client, auth_headers, admin_headers):
     # 用户浏览
     response = client.get("/products", headers=user)
     assert response.status_code == 200
-    products = response.json()["data"]
-    assert len(products) >= 1
-    assert products[0]["name"] == "AirPods"
+    page = response.json()["data"]
+    assert page["total"] >= 1
+    assert len(page["items"]) >= 1
+    assert page["items"][0]["name"] == "AirPods"
 
 
 # ================ 下单测试 ================
@@ -194,7 +195,7 @@ def test_insufficient_stock_cannot_order(client, auth_headers, admin_headers):
         json={"items": [{"sku_id": sku_id, "quantity": 10}]},  # 只有 5 个
         headers=headers,
     )
-    assert response.status_code == 200
+    assert response.status_code == 409
     body = response.json()
     assert body["code"] == 10103  # InsufficientStockError
 
@@ -251,11 +252,13 @@ def test_user_can_only_see_own_orders(client, auth_headers):
     # Alice 没有订单
     response = client.get("/orders", headers=alice)
     assert response.status_code == 200
-    assert len(response.json()["data"]) == 0
+    assert response.json()["data"]["total"] == 0
+    assert len(response.json()["data"]["items"]) == 0
 
     # Bob 也没有
     response = client.get("/orders", headers=bob)
-    assert len(response.json()["data"]) == 0
+    assert response.json()["data"]["total"] == 0
+    assert len(response.json()["data"]["items"]) == 0
 
 
 def test_user_cannot_view_other_users_order(client, auth_headers, admin_headers):
@@ -333,7 +336,7 @@ def test_cancel_non_pending_order_fails(client, auth_headers, admin_headers):
 
     # 第二次取消失败
     response = client.post(f"/orders/{order_id}/cancel", headers=headers)
-    assert response.status_code == 200
+    assert response.status_code == 409
     assert response.json()["code"] == 10105  # OrderStatusError
 
 
@@ -397,8 +400,9 @@ def test_admin_can_manage_orders(client, admin_headers, auth_headers):
     # 管理员查看全部订单
     response = client.get("/admin/orders", headers=admin)
     assert response.status_code == 200
-    orders = response.json()["data"]
-    assert len(orders) >= 1
+    page = response.json()["data"]
+    assert page["total"] >= 1
+    assert len(page["items"]) >= 1
 
     # 管理员修改订单状态为 PAID
     response = client.patch(
@@ -432,7 +436,7 @@ def test_off_sale_product_not_visible(client, auth_headers, admin_headers):
 
     # 用户看不到
     response = client.get("/products", headers=user)
-    products = response.json()["data"]
+    products = response.json()["data"]["items"]
     product_ids = [p["id"] for p in products]
     assert product_id not in product_ids
 
@@ -652,9 +656,290 @@ def test_illegal_order_status_transitions(
     order_id = _order_at_status(client, admin, user, sku_id, source_status)
 
     resp = _admin_set_status(client, admin, order_id, illegal_target)
-    assert resp.status_code == 200
+    assert resp.status_code == 409
     assert resp.json()["code"] == 10105
 
     # 原状态未被修改
     detail = client.get(f"/orders/{order_id}", headers=user).json()["data"]
     assert detail["status"] == source_status
+
+
+# ================ 分页测试 ================
+def test_products_default_pagination(client, auth_headers, admin_headers):
+    """1. /products 默认分页：page=1, page_size=20。"""
+    admin = admin_headers()
+    user = auth_headers()
+    # 创建 1 个在售商品即可验证默认分页结构
+    _create_product_with_sku(client, admin, "Pager1", "PG-001", "1.00", 5)
+
+    resp = client.get("/products", headers=user)
+    assert resp.status_code == 200
+    page = resp.json()["data"]
+    assert page["page"] == 1
+    assert page["page_size"] == 20
+    assert page["total"] >= 1
+    assert len(page["items"]) >= 1
+
+
+def test_products_custom_page_size(client, auth_headers, admin_headers):
+    """2+3. /products 指定 page/page_size，total 正确。"""
+    admin = admin_headers()
+    user = auth_headers()
+    # 创建 5 个在售商品
+    for i in range(5):
+        _create_product_with_sku(client, admin, f"Size{i}", f"SZ-{i:03d}", "1.00", 5)
+
+    resp = client.get("/products?page=1&page_size=3", headers=user)
+    assert resp.status_code == 200
+    page = resp.json()["data"]
+    assert page["page"] == 1
+    assert page["page_size"] == 3
+    assert page["total"] >= 5
+    assert len(page["items"]) == 3
+
+
+def test_products_total_pages_calculation(client, auth_headers, admin_headers):
+    """4. total_pages 正确（不能整除向上取整）。"""
+    admin = admin_headers()
+    user = auth_headers()
+    # 创建 5 个在售商品，page_size=2 → total_pages=3（2+2+1）
+    for i in range(5):
+        _create_product_with_sku(client, admin, f"Pages{i}", f"PS-{i:03d}", "1.00", 5)
+
+    resp = client.get("/products?page=1&page_size=2", headers=user)
+    assert resp.status_code == 200
+    page = resp.json()["data"]
+    assert page["total"] >= 5
+    # total_pages = ceil(total / page_size)
+    import math
+
+    assert page["total_pages"] == math.ceil(page["total"] / 2)
+
+
+def test_products_second_page_data(client, auth_headers, admin_headers):
+    """5. 第二页数据正确（不与第一页重复）。"""
+    admin = admin_headers()
+    user = auth_headers()
+    # 创建 3 个在售商品，page_size=2 → 第一页 2 个，第二页 1 个
+    for i in range(3):
+        _create_product_with_sku(client, admin, f"Second{i}", f"SP-{i:03d}", "1.00", 5)
+
+    first = client.get("/products?page=1&page_size=2", headers=user).json()["data"]
+    second = client.get("/products?page=2&page_size=2", headers=user).json()["data"]
+
+    assert len(first["items"]) == 2
+    assert len(second["items"]) >= 1
+    first_ids = {p["id"] for p in first["items"]}
+    second_ids = {p["id"] for p in second["items"]}
+    assert not first_ids.intersection(second_ids), "第二页不应与第一页重复"
+
+
+def test_products_empty_result_pagination(client, auth_headers):
+    """6. 空结果分页正确（total=0, total_pages=0, items=[]）。"""
+    user = auth_headers()
+    # 不创建任何商品，默认商品表为空（每个测试重置 DB）
+    resp = client.get("/products?page=1&page_size=10", headers=user)
+    assert resp.status_code == 200
+    page = resp.json()["data"]
+    assert page["total"] == 0
+    assert page["total_pages"] == 0
+    assert page["items"] == []
+
+
+def test_products_page_zero_rejected(client, auth_headers):
+    """7. page=0 返回 422。"""
+    user = auth_headers()
+    resp = client.get("/products?page=0", headers=user)
+    assert resp.status_code == 422
+    assert resp.json()["code"] == 422
+
+
+def test_products_page_size_zero_rejected(client, auth_headers):
+    """8. page_size=0 返回 422。"""
+    user = auth_headers()
+    resp = client.get("/products?page_size=0", headers=user)
+    assert resp.status_code == 422
+    assert resp.json()["code"] == 422
+
+
+def test_products_page_size_over_100_rejected(client, auth_headers):
+    """9. page_size=101 返回 422。"""
+    user = auth_headers()
+    resp = client.get("/products?page_size=101", headers=user)
+    assert resp.status_code == 422
+    assert resp.json()["code"] == 422
+
+
+def test_user_orders_pagination_isolated(client, auth_headers, admin_headers):
+    """10. 普通用户订单分页只能看到自己的订单。"""
+    admin = admin_headers()
+    _, sku_id = _create_product_with_sku(
+        client, admin, "IsoOrder", "IO-001", "10.00", 50
+    )
+    alice = auth_headers(name="Alice", email="alice@example.com")
+    bob = auth_headers(name="Bob", email="bob@example.com")
+
+    # Alice 下 3 单
+    for _ in range(3):
+        client.post(
+            "/orders",
+            json={"items": [{"sku_id": sku_id, "quantity": 1}]},
+            headers=alice,
+        )
+    # Bob 下 1 单
+    client.post(
+        "/orders",
+        json={"items": [{"sku_id": sku_id, "quantity": 1}]},
+        headers=bob,
+    )
+
+    # Alice 分页查看：只能看到自己的 3 单
+    resp = client.get("/orders?page=1&page_size=2", headers=alice)
+    assert resp.status_code == 200
+    page = resp.json()["data"]
+    assert page["total"] == 3
+    assert len(page["items"]) == 2
+    for o in page["items"]:
+        assert o["user_id"] is not None
+        # 验证是 Alice 的订单（通过详情接口确认归属）
+    # 第二页应只有 1 个
+    resp2 = client.get("/orders?page=2&page_size=2", headers=alice)
+    page2 = resp2.json()["data"]
+    assert len(page2["items"]) == 1
+
+    # Bob 分页查看：只能看到自己的 1 单
+    resp_bob = client.get("/orders?page=1&page_size=10", headers=bob)
+    page_bob = resp_bob.json()["data"]
+    assert page_bob["total"] == 1
+    assert len(page_bob["items"]) == 1
+
+
+def test_admin_orders_pagination_sees_all(client, auth_headers, admin_headers):
+    """11. admin orders 分页能看到全部订单。"""
+    admin = admin_headers()
+    _, sku_id = _create_product_with_sku(
+        client, admin, "AllOrders", "AO2-001", "10.00", 100
+    )
+    alice = auth_headers(name="Alice", email="alice@example.com")
+    bob = auth_headers(name="Bob", email="bob@example.com")
+
+    # 两个用户各下 2 单，共 4 单
+    for _ in range(2):
+        client.post(
+            "/orders",
+            json={"items": [{"sku_id": sku_id, "quantity": 1}]},
+            headers=alice,
+        )
+        client.post(
+            "/orders",
+            json={"items": [{"sku_id": sku_id, "quantity": 1}]},
+            headers=bob,
+        )
+
+    # 管理员分页查看全部
+    resp = client.get("/admin/orders?page=1&page_size=2", headers=admin)
+    assert resp.status_code == 200
+    page = resp.json()["data"]
+    assert page["total"] >= 4
+    assert len(page["items"]) == 2
+
+    # 第二页也应有数据
+    resp2 = client.get("/admin/orders?page=2&page_size=2", headers=admin)
+    page2 = resp2.json()["data"]
+    assert len(page2["items"]) == 2
+
+
+# ================ 参数校验测试 ================
+def test_order_quantity_zero_rejected(client, auth_headers, admin_headers):
+    """12. quantity=0 被拒绝（422）。"""
+    admin = admin_headers()
+    _, sku_id = _create_product_with_sku(
+        client, admin, "QtyZero", "QZ-001", "10.00", 10
+    )
+    headers = auth_headers()
+    resp = client.post(
+        "/orders",
+        json={"items": [{"sku_id": sku_id, "quantity": 0}]},
+        headers=headers,
+    )
+    assert resp.status_code == 422
+    assert resp.json()["code"] == 422
+
+
+def test_order_quantity_negative_rejected(client, auth_headers, admin_headers):
+    """13. quantity<0 被拒绝（422）。"""
+    admin = admin_headers()
+    _, sku_id = _create_product_with_sku(client, admin, "QtyNeg", "QN-001", "10.00", 10)
+    headers = auth_headers()
+    resp = client.post(
+        "/orders",
+        json={"items": [{"sku_id": sku_id, "quantity": -1}]},
+        headers=headers,
+    )
+    assert resp.status_code == 422
+    assert resp.json()["code"] == 422
+
+
+def test_sku_stock_negative_rejected(client, admin_headers):
+    """14. stock<0 被拒绝（422）。"""
+    admin = admin_headers()
+    # 先创建商品
+    product_resp = client.post(
+        "/admin/products",
+        json={"name": "NegStock", "description": "test"},
+        headers=admin,
+    )
+    product_id = product_resp.json()["data"]["id"]
+
+    # 尝试创建 stock=-1 的 SKU
+    resp = client.post(
+        f"/admin/products/{product_id}/skus",
+        json={
+            "sku_code": "NS-001",
+            "name": "NegStock SKU",
+            "price": "10.00",
+            "stock": -1,
+        },
+        headers=admin,
+    )
+    assert resp.status_code == 422
+    assert resp.json()["code"] == 422
+
+
+def test_sku_price_zero_or_negative_rejected(client, admin_headers):
+    """15. price<=0 被拒绝（422）。"""
+    admin = admin_headers()
+    product_resp = client.post(
+        "/admin/products",
+        json={"name": "ZeroPrice", "description": "test"},
+        headers=admin,
+    )
+    product_id = product_resp.json()["data"]["id"]
+
+    # price = 0
+    resp0 = client.post(
+        f"/admin/products/{product_id}/skus",
+        json={
+            "sku_code": "ZP-001",
+            "name": "Zero Price",
+            "price": "0.00",
+            "stock": 10,
+        },
+        headers=admin,
+    )
+    assert resp0.status_code == 422
+    assert resp0.json()["code"] == 422
+
+    # price = -1
+    resp_neg = client.post(
+        f"/admin/products/{product_id}/skus",
+        json={
+            "sku_code": "NP-001",
+            "name": "Neg Price",
+            "price": "-1.00",
+            "stock": 10,
+        },
+        headers=admin,
+    )
+    assert resp_neg.status_code == 422
+    assert resp_neg.json()["code"] == 422
