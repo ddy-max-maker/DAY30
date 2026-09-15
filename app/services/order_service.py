@@ -1,4 +1,4 @@
-"""订单业务逻辑：下单事务、查询、取消。"""
+"""订单业务逻辑：下单事务、查询、取消、支付。"""
 
 import uuid
 from decimal import Decimal
@@ -8,7 +8,6 @@ from sqlalchemy.orm import Session
 
 from app.exceptions.errors import (
     OrderNotFoundError,
-    OrderStatusError,
     SKUNotAvailableError,
     SKUNotFoundError,
 )
@@ -18,16 +17,7 @@ from app.models.product import ProductStatus
 from app.models.sku import SKU, SKUStatus
 from app.schemas.order import OrderCreate, OrderStatusUpdate
 from app.services.inventory_service import deduct_stock, restore_stock
-
-# 管理员订单状态机：key 为当前状态，value 为允许流转到的状态集合。
-# CANCELLED / COMPLETED 是终态；PAID 暂不允许取消（退款功能未实现）。
-ALLOWED_STATUS_TRANSITIONS: dict[OrderStatus, set[OrderStatus]] = {
-    OrderStatus.PENDING: {OrderStatus.PAID, OrderStatus.CANCELLED},
-    OrderStatus.PAID: {OrderStatus.SHIPPED},
-    OrderStatus.SHIPPED: {OrderStatus.COMPLETED},
-    OrderStatus.CANCELLED: set(),
-    OrderStatus.COMPLETED: set(),
-}
+from app.services.order_state_machine import validate_transition
 
 
 def generate_order_no() -> str:
@@ -151,11 +141,8 @@ def cancel_order(db: Session, order_id: int, user_id: int) -> Order:
         if order.user_id != user_id:
             raise OrderNotFoundError(message="订单不存在")
 
-        # --- 2. 拿到锁之后再检查状态（此时读到的一定是最新值）---
-        if order.status != OrderStatus.PENDING:
-            raise OrderStatusError(
-                message=f"当前订单状态为 {order.status.value}，无法取消"
-            )
+        # --- 2. 状态机校验（拿到锁之后读到的一定是最新值）---
+        validate_transition(order.status, OrderStatus.CANCELLED)
 
         # --- 3. 恢复库存（每行库存也单独加 FOR UPDATE 锁）---
         for item in order.items:
@@ -177,12 +164,41 @@ def update_order_status(db: Session, order_id: int, data: OrderStatusUpdate) -> 
         raise OrderNotFoundError()
 
     # 状态机校验：只允许白名单内的流转，终态订单拒绝任何修改
-    if data.status not in ALLOWED_STATUS_TRANSITIONS[order.status]:
-        raise OrderStatusError(
-            message=f"订单状态不允许从 {order.status.value} 变更为 {data.status.value}"
-        )
+    validate_transition(order.status, data.status)
 
     order.status = data.status
     db.commit()
     db.refresh(order)
     return order
+
+
+# ================ 用户支付订单 ================
+def pay_order(db: Session, order_id: int, user_id: int) -> Order:
+    """用户支付自己的订单（PENDING → PAID）。
+
+    模拟支付：不接入真实支付网关，只做状态流转。
+
+    并发安全：先 SELECT ... FOR UPDATE 锁定订单行，再校验状态，
+    防止并发重复支付。两个并发支付请求中，第二个会阻塞在订单行锁上，
+    等第一个提交后才能读到最新状态（PAID），从而被状态机挡住。
+    """
+    try:
+        # --- 1. 锁定订单行 ---
+        order = db.scalar(select(Order).where(Order.id == order_id).with_for_update())
+        if order is None:
+            raise OrderNotFoundError()
+
+        if order.user_id != user_id:
+            raise OrderNotFoundError(message="订单不存在")
+
+        # --- 2. 状态机校验（只允许 PENDING → PAID）---
+        validate_transition(order.status, OrderStatus.PAID)
+
+        # --- 3. 更新状态 ---
+        order.status = OrderStatus.PAID
+        db.commit()
+        db.refresh(order)
+        return order
+    except Exception:
+        db.rollback()
+        raise
