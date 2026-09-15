@@ -11,6 +11,7 @@ from app.exceptions.handlers import (
 from app.middleware.request_log import request_log_middleware
 from app.routers.admin import router as admin_router
 from app.routers.auth import router as auth_router
+from app.routers.cart import router as cart_router
 from app.routers.order import router as order_router
 from app.routers.product import router as product_router
 from app.routers.user import router as user_router
@@ -36,6 +37,7 @@ app.include_router(user_router)
 app.include_router(product_router)
 app.include_router(order_router)
 app.include_router(admin_router)
+app.include_router(cart_router)
 
 # ---------- 注册异常处理器（覆盖 FastAPI 默认行为）----------
 # 自定义业务异常

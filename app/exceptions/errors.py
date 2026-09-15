@@ -155,3 +155,14 @@ class OrderNotEmptyError(BusinessError):
 
     def __init__(self, message: str = "订单不能为空"):
         super().__init__(message=message, code=10106, status_code=400)
+
+
+# ---------- 购物车相关 ----------
+class CartError(BusinessError):
+    """购物车操作失败（Redis 异常等）：HTTP 500 Internal Server Error。
+
+    Redis 不可用属于服务端故障，不应向客户端暴露底层细节。
+    """
+
+    def __init__(self, message: str = "购物车服务异常"):
+        super().__init__(message=message, code=10200, status_code=500)

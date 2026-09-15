@@ -3,6 +3,7 @@ services:
     volumes:
       - ./app:/app/app
       - ./logs:/app/logs
+      - ./tests:/app/tests
 
 
     environment:
