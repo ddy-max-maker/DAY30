@@ -194,7 +194,7 @@ def test_insufficient_stock_cannot_order(client, auth_headers, admin_headers):
         json={"items": [{"sku_id": sku_id, "quantity": 10}]},  # 只有 5 个
         headers=headers,
     )
-    assert response.status_code == 200
+    assert response.status_code == 409
     body = response.json()
     assert body["code"] == 10103  # InsufficientStockError
 
@@ -333,7 +333,7 @@ def test_cancel_non_pending_order_fails(client, auth_headers, admin_headers):
 
     # 第二次取消失败
     response = client.post(f"/orders/{order_id}/cancel", headers=headers)
-    assert response.status_code == 200
+    assert response.status_code == 409
     assert response.json()["code"] == 10105  # OrderStatusError
 
 
@@ -652,7 +652,7 @@ def test_illegal_order_status_transitions(
     order_id = _order_at_status(client, admin, user, sku_id, source_status)
 
     resp = _admin_set_status(client, admin, order_id, illegal_target)
-    assert resp.status_code == 200
+    assert resp.status_code == 409
     assert resp.json()["code"] == 10105
 
     # 原状态未被修改

@@ -14,9 +14,11 @@ from app.core.config import (
     DB_PORT,
     DB_USER,
 )
+from app.core.security import create_access_token
 from app.database.database import Base, get_db
 from app.database.redis import redis_client
 from app.main import app as fastapi_app
+from tests.factories.user_factory import create_test_admin, create_test_user
 
 # 确保所有 ORM Model 都被注册到 Base.metadata
 test_database_url = URL.create(
@@ -58,8 +60,21 @@ def reset_test_state():
 
 
 @pytest.fixture
-def client():
+def db_session():
+    """提供测试数据库 session，供 factory 直接写库使用。
 
+    与 override_get_db 用同一个 TestingSessionLocal，
+    所以通过 db_session 写的数据对 API 请求可见。
+    """
+    db = TestingSessionLocal()
+    try:
+        yield db
+    finally:
+        db.close()
+
+
+@pytest.fixture
+def client():
     fastapi_app.dependency_overrides[get_db] = override_get_db
 
     with TestClient(fastapi_app) as test_client:
@@ -69,7 +84,28 @@ def client():
 
 
 @pytest.fixture
+def user_token(db_session):
+    """创建一个普通用户并返回其 JWT token 字符串。
+
+    使用 factory 直接写库，不经过注册接口，避免依赖接口行为。
+    """
+    user = create_test_user(db_session)
+    return create_access_token(user.id)
+
+
+@pytest.fixture
+def admin_token(db_session):
+    """创建一个管理员用户并返回其 JWT token 字符串。"""
+    admin = create_test_admin(db_session)
+    return create_access_token(admin.id)
+
+
+@pytest.fixture
 def auth_headers(client):
+    """通过 HTTP 注册+登录创建用户，返回 Authorization header dict。
+
+    保留用于测试注册/登录接口本身的场景。
+    """
 
     def create_headers(name="Tom", email="tom@example.com", password="12345678"):
         register_response = client.post(
@@ -95,9 +131,9 @@ def auth_headers(client):
 
 @pytest.fixture
 def admin_headers(client):
-    """创建 ADMIN 用户并返回认证头。
+    """通过直接写库创建 ADMIN 用户，登录后返回 Authorization header dict。
 
-    注册接口只能创建 USER，ADMIN 通过直接写库创建（模拟内部脚本）。
+    保留用于需要完整登录流程的场景。
     """
 
     def create_admin_headers(

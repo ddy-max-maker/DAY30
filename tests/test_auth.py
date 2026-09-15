@@ -7,7 +7,7 @@ def test_login_invalid_user(client):
         json={"email": "notexist@example.com", "password": "wrongpassword"},
     )
 
-    assert response.status_code == 200
+    assert response.status_code == 401
     body = response.json()
     assert body["code"] == 10001
     assert body["message"] == "账号或密码错误"
@@ -45,7 +45,7 @@ def test_register_duplicate_email(client):
 
     second_response = client.post("/auth/register", json=user_data)
 
-    assert second_response.status_code == 200
+    assert second_response.status_code == 409
     body = second_response.json()
     assert body["code"] == 10002
 
@@ -85,7 +85,7 @@ def test_verify_code_invalid(client):
         "/auth/code/verify", json={"email": email, "code": "000000"}
     )
 
-    assert verify_response.status_code == 200
+    assert verify_response.status_code == 400
     body = verify_response.json()
     assert body["code"] == 10000
 
@@ -100,7 +100,7 @@ def test_verify_code_cooldown(client):
 
     second_response = client.post("/auth/code/request", json={"email": email})
 
-    assert second_response.status_code == 200
+    assert second_response.status_code == 400
     body = second_response.json()
     assert body["code"] == 10000
 
