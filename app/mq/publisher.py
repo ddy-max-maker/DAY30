@@ -38,7 +38,9 @@ def build_order_paid_message(order_id: int, user_id: int) -> dict:
 async def publish_order_paid_event(order_id: int, user_id: int) -> None:
     """发布 order.paid 事件到 order_events exchange。
 
-    未连接 / 发送失败时抛异常，由调用方记录错误日志。
+    channel 已在 connect() 中启用 publisher_confirms=True，
+    exchange.publish() 返回 True 才表示 Broker 确认接收。
+    未连接 / Broker 未确认时抛异常，由调用方记录错误日志。
     """
     exchange = get_order_events_exchange()
     if exchange is None:
@@ -53,7 +55,14 @@ async def publish_order_paid_event(order_id: int, user_id: int) -> None:
         delivery_mode=aio_pika.DeliveryMode.PERSISTENT,
     )
 
-    await exchange.publish(message, routing_key=ORDER_PAID_ROUTING_KEY)
+    # publisher confirm：返回 False 表示 Broker 未确认，视为发布失败
+    confirmed = await exchange.publish(message, routing_key=ORDER_PAID_ROUTING_KEY)
+    if not confirmed:
+        raise RuntimeError(
+            f"RabbitMQ Broker 未确认 order.paid 消息 "
+            f"（publisher confirm 返回 False）order_id={order_id}"
+        )
+
     logger.info(
         "order_paid_event_published order_id=%s user_id=%s exchange=%s routing_key=%s",
         order_id,
