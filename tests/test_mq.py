@@ -47,7 +47,7 @@ from app.mq.publisher import (
     build_order_paid_message,
     publish_order_paid_event,
 )
-from app.services import order_service
+from app.services import payment_service
 
 
 def _auth(token: str) -> dict:
@@ -141,8 +141,11 @@ def test_routing_key_is_order_paid():
     assert rabbitmq.ORDER_PAID_QUEUE == "order_paid_queue"
 
 
-# ================ 4. 支付接口触发 publish ================
+# ================ 4. 支付回调触发 publish ================
 def test_pay_endpoint_publishes_event(client, user_token, admin_token, monkeypatch):
+    """业务规则变化（第二阶段）：支付入口改为 POST /payments/callback，
+    publish 断言迁移到 payment_service。"""
+
     sku_id = _create_sku(client, admin_token, sku_code="MQ-PUB-1")
     order_id = _create_pending_order(client, user_token, sku_id)
 
@@ -156,32 +159,66 @@ def test_pay_endpoint_publishes_event(client, user_token, admin_token, monkeypat
     async def fake_publish(pub_order_id, pub_user_id):
         published.append({"order_id": pub_order_id, "user_id": pub_user_id})
 
-    monkeypatch.setattr(order_service, "publish_order_paid_event", fake_publish)
+    monkeypatch.setattr(payment_service, "publish_order_paid_event", fake_publish)
 
-    response = client.post(f"/orders/{order_id}/pay", headers=_auth(user_token))
+    response = client.post(
+        "/payments/callback",
+        json={
+            "order_id": order_id,
+            "payment_reference": "PAY-MQ-0001",
+            "status": "success",
+        },
+    )
     assert response.status_code == 200
     assert response.json()["data"]["status"] == "paid"
     assert len(published) == 1
     assert published[0] == {"order_id": order_id, "user_id": user_id}
+
+    # 重复回调（幂等）不重复发布事件
+    client.post(
+        "/payments/callback",
+        json={
+            "order_id": order_id,
+            "payment_reference": "PAY-MQ-0001",
+            "status": "success",
+        },
+    )
+    assert len(published) == 1
 
 
 # ================ 5. MQ 发送失败不影响支付 ================
 def test_publish_failure_does_not_break_payment(
     client, user_token, admin_token, monkeypatch
 ):
+
     sku_id = _create_sku(client, admin_token, sku_code="MQ-PUB-2")
     order_id = _create_pending_order(client, user_token, sku_id)
 
     async def broken_publish(pub_order_id, pub_user_id):
         raise RuntimeError("RabbitMQ 不可用")
 
-    monkeypatch.setattr(order_service, "publish_order_paid_event", broken_publish)
+    monkeypatch.setattr(payment_service, "publish_order_paid_event", broken_publish)
 
-    response = client.post(f"/orders/{order_id}/pay", headers=_auth(user_token))
+    response = client.post(
+        "/payments/callback",
+        json={
+            "order_id": order_id,
+            "payment_reference": "PAY-MQ-0002",
+            "status": "success",
+        },
+    )
     assert response.status_code == 200
     assert response.json()["data"]["status"] == "paid"
-    repeat = client.post(f"/orders/{order_id}/pay", headers=_auth(user_token))
-    assert repeat.status_code == 409
+    # 重复回调幂等成功（不再 409：同流水号回调幂等返回）
+    repeat = client.post(
+        "/payments/callback",
+        json={
+            "order_id": order_id,
+            "payment_reference": "PAY-MQ-0002",
+            "status": "success",
+        },
+    )
+    assert repeat.status_code == 200
 
 
 # ================ 5a. mandatory 消息不可路由 → DeliveryError ================
@@ -208,8 +245,8 @@ def test_publisher_propagates_delivery_error(monkeypatch):
 def test_delivery_error_does_not_break_payment(
     client, user_token, admin_token, monkeypatch
 ):
-    """mandatory 消息不可路由 → DeliveryError → pay_order_and_publish 捕获并记日志，
-    支付仍成功返回 paid。
+    """mandatory 消息不可路由 → DeliveryError → payment_callback_and_publish
+    捕获并记日志，支付仍成功返回 paid。
     """
     from aio_pika.exceptions import DeliveryError
 
@@ -224,12 +261,26 @@ def test_delivery_error_does_not_break_payment(
         "app.mq.publisher.get_order_events_exchange", lambda: mock_exchange
     )
 
-    response = client.post(f"/orders/{order_id}/pay", headers=_auth(user_token))
+    response = client.post(
+        "/payments/callback",
+        json={
+            "order_id": order_id,
+            "payment_reference": "PAY-MQ-0003",
+            "status": "success",
+        },
+    )
     assert response.status_code == 200
     assert response.json()["data"]["status"] == "paid"
-    # 重复支付返回 409，证明支付确实提交成功
-    repeat = client.post(f"/orders/{order_id}/pay", headers=_auth(user_token))
-    assert repeat.status_code == 409
+    # 重复回调幂等成功（同流水号），证明支付确实提交成功
+    repeat = client.post(
+        "/payments/callback",
+        json={
+            "order_id": order_id,
+            "payment_reference": "PAY-MQ-0003",
+            "status": "success",
+        },
+    )
+    assert repeat.status_code == 200
 
 
 # ================ 6. 未连接时真实 publisher 抛异常 ================

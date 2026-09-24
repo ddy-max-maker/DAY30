@@ -313,8 +313,13 @@ def test_cancel_order(client, auth_headers, admin_headers):
     assert inv.stock == 10  # 恢复到 10
 
 
-def test_cancel_non_pending_order_fails(client, auth_headers, admin_headers):
-    """已取消的订单不能再取消。"""
+def test_repeat_cancel_is_idempotent(client, auth_headers, admin_headers):
+    """重复取消幂等：第二次取消直接返回已取消的订单（200，不报错）。
+
+    业务规则变化（第二阶段）：取消接口幂等化——拿到订单行锁后发现
+    已是 CANCELLED 时返回当前订单，而不是抛状态错误；
+    库存不会因重复取消而重复恢复。
+    """
     admin = admin_headers()
     _, sku_id = _create_product_with_sku(
         client, admin, "Gadget2", "G2-001", "10.00", 10
@@ -331,10 +336,10 @@ def test_cancel_non_pending_order_fails(client, auth_headers, admin_headers):
     # 第一次取消成功
     client.post(f"/orders/{order_id}/cancel", headers=headers)
 
-    # 第二次取消失败
+    # 第二次取消：幂等返回原订单
     response = client.post(f"/orders/{order_id}/cancel", headers=headers)
-    assert response.status_code == 409
-    assert response.json()["code"] == 10105  # OrderStatusError
+    assert response.status_code == 200
+    assert response.json()["data"]["status"] == "cancelled"
 
 
 def test_transaction_rollback_on_insufficient_stock(
@@ -378,8 +383,13 @@ def test_transaction_rollback_on_insufficient_stock(
     assert inv1.stock == 5  # 没扣
 
 
-def test_admin_can_manage_orders(client, admin_headers, auth_headers):
-    """管理员可以查看全部订单和修改订单状态。"""
+def test_admin_can_view_orders_but_not_modify(client, admin_headers, auth_headers):
+    """管理员可以查看全部订单，但不能修改订单状态。
+
+    业务规则变化（第二阶段）：PATCH /admin/orders/{id}/status 万能跳状态
+    接口已移除——ADMIN 只负责查看，状态变更必须走状态机
+    （支付回调 / 商家履约动作 / 客户取消与确认收货）。
+    """
     admin = admin_headers()
     _, sku_id = _create_product_with_sku(
         client, admin, "AdminOrder", "AO-001", "15.00", 10
@@ -400,14 +410,13 @@ def test_admin_can_manage_orders(client, admin_headers, auth_headers):
     orders = response.json()["data"]
     assert len(orders) >= 1
 
-    # 管理员修改订单状态为 PAID
+    # 万能跳状态接口已删除 → 404
     response = client.patch(
         f"/admin/orders/{order_id}/status",
         json={"status": "paid"},
         headers=admin,
     )
-    assert response.status_code == 200
-    assert response.json()["data"]["status"] == "paid"
+    assert response.status_code == 404
 
 
 def test_off_sale_product_not_visible(client, auth_headers, admin_headers):
@@ -460,7 +469,7 @@ def test_order_no_is_uuid_based(client, auth_headers, admin_headers):
 
 
 def test_duplicate_cancel_restores_stock_once(client, auth_headers, admin_headers):
-    """同一订单重复取消：第二次报状态错误，库存只恢复一次。"""
+    """同一订单重复取消：幂等返回原订单，库存只恢复一次。"""
     admin = admin_headers()
     _, sku_id = _create_product_with_sku(
         client, admin, "DupCancel", "DC-001", "10.00", 10
@@ -478,9 +487,10 @@ def test_duplicate_cancel_restores_stock_once(client, auth_headers, admin_header
     first = client.post(f"/orders/{order_id}/cancel", headers=headers)
     assert first.json()["data"]["status"] == "cancelled"
 
-    # 第二次取消：订单已不是 PENDING
+    # 第二次取消：幂等返回原订单（不抛错、不再恢复库存）
     second = client.post(f"/orders/{order_id}/cancel", headers=headers)
-    assert second.json()["code"] == 10105
+    assert second.status_code == 200
+    assert second.json()["data"]["status"] == "cancelled"
 
     # 库存只恢复一次：10（原始）而不是 12（重复恢复）
     from sqlalchemy import select as sa_select
@@ -494,11 +504,12 @@ def test_duplicate_cancel_restores_stock_once(client, auth_headers, admin_header
 
 
 def test_concurrent_cancel_restores_stock_once(client, auth_headers, admin_headers):
-    """并发取消同一订单：恰好一个成功，另一个被行锁挡住，库存只恢复一次。
+    """并发取消同一订单：两次请求都幂等成功，但库存只恢复一次。
 
-    两个线程用各自的 DB 会话同时调用 cancel_order：
-    先拿到订单行锁（SELECT ... FOR UPDATE）的线程执行取消并恢复库存，
-    另一个线程等锁释放后读到 CANCELLED 状态，抛 OrderStatusError。
+    业务规则变化（第二阶段）：取消幂等化——两个线程用各自的 DB 会话
+    同时调用 cancel_order，先拿到订单行锁（SELECT ... FOR UPDATE）的线程
+    执行取消并恢复库存，另一个线程等锁释放后读到 CANCELLED 状态，
+    幂等返回当前订单，不会重复恢复库存。
     """
     import threading
 
@@ -540,9 +551,8 @@ def test_concurrent_cancel_restores_stock_once(client, auth_headers, admin_heade
     t1.join(timeout=30)
     t2.join(timeout=30)
 
-    # 恰好一个成功、一个被状态机拒绝
-    assert results.count("ok") == 1
-    assert ("err", 10105) in results
+    # 两个请求都幂等成功
+    assert results.count("ok") == 2
 
     # 库存只恢复一次
     from sqlalchemy import select as sa_select
@@ -555,7 +565,7 @@ def test_concurrent_cancel_restores_stock_once(client, auth_headers, admin_heade
     assert inv.stock == 10
 
 
-# ---------- 订单状态机 ----------
+# ---------- 订单状态机（真实业务动作驱动）----------
 def _create_pending_order(client, admin, user, sku_id, quantity=1):
     """创建一笔 PENDING 订单，返回 order_id。"""
     resp = client.post(
@@ -567,91 +577,164 @@ def _create_pending_order(client, admin, user, sku_id, quantity=1):
     return resp.json()["data"]["id"]
 
 
-def _admin_set_status(client, admin, order_id, status):
-    return client.patch(
-        f"/admin/orders/{order_id}/status",
-        json={"status": status},
-        headers=admin,
+def _create_merchant_product_with_sku(
+    client, merchant, name="MProduct", sku_code="M-SKU", price="1.00", stock=10
+):
+    """辅助：商家创建商品 + SKU（订单归属该商家，商家可执行履约动作）。"""
+    product_resp = client.post(
+        "/merchant/products",
+        json={"name": name, "description": f"Description for {name}"},
+        headers=merchant,
+    )
+    assert product_resp.status_code == 200
+    product_id = product_resp.json()["data"]["id"]
+
+    sku_resp = client.post(
+        f"/merchant/products/{product_id}/skus",
+        json={
+            "sku_code": sku_code,
+            "name": f"{name} SKU",
+            "price": price,
+            "stock": stock,
+        },
+        headers=merchant,
+    )
+    assert sku_resp.status_code == 200
+    return product_id, sku_resp.json()["data"]["id"]
+
+
+def _pay_order(client, order_id, reference="PAY-CHAIN-0001"):
+    """模拟支付回调。"""
+    return client.post(
+        "/payments/callback",
+        json={
+            "order_id": order_id,
+            "payment_reference": reference,
+            "status": "success",
+        },
     )
 
 
-# 各状态从 PENDING 出发的合法到达路径
-_STATUS_PATH = {
+# 各状态从 PENDING 出发的真实业务动作路径
+_ORDER_PATH = {
     "pending": [],
-    "paid": ["paid"],
-    "shipped": ["paid", "shipped"],
-    "completed": ["paid", "shipped", "completed"],
-    "cancelled": ["cancelled"],
+    "paid": ["pay"],
+    "preparing": ["pay", "prepare"],
+    "ready": ["pay", "prepare", "ready"],
+    "shipped": ["pay", "prepare", "ready", "ship"],
+    "completed": ["pay", "prepare", "ready", "ship", "confirm"],
+    "cancelled": ["cancel"],
 }
 
 
-def _order_at_status(client, admin, user, sku_id, target_status):
+def _order_at_status(client, admin, merchant, user, sku_id, target_status):
+    """通过真实业务动作（支付回调/商家履约/客户操作）把订单推进到目标状态。"""
     order_id = _create_pending_order(client, admin, user, sku_id)
-    for step in _STATUS_PATH[target_status]:
-        resp = _admin_set_status(client, admin, order_id, step)
-        assert resp.status_code == 200, f"准备状态失败: {step}"
+    for step in _ORDER_PATH[target_status]:
+        if step == "pay":
+            resp = _pay_order(client, order_id)
+        elif step == "cancel":
+            resp = client.post(f"/orders/{order_id}/cancel", headers=user)
+        elif step == "confirm":
+            resp = client.post(f"/orders/{order_id}/confirm", headers=user)
+        else:  # prepare / ready / ship（MERCHANT）
+            resp = client.post(
+                f"/merchant/orders/{order_id}/{step}", headers=merchant
+            )
+        assert resp.status_code == 200, f"准备状态失败: {step}: {resp.text}"
     return order_id
 
 
-def test_valid_order_status_chain(client, auth_headers, admin_headers):
-    """合法状态链全部放行：PENDING→PAID→SHIPPED→COMPLETED，PENDING→CANCELLED。"""
+def test_valid_order_status_chain(
+    client, auth_headers, admin_headers, merchant_headers
+):
+    """合法履约链全部放行：PENDING→PAID→PREPARING→READY→SHIPPED→COMPLETED，PENDING→CANCELLED。"""
     admin = admin_headers()
+    merchant = merchant_headers()
     user = auth_headers()
 
-    # 正向履约链
-    _, sku1 = _create_product_with_sku(client, admin, "Chain1", "CH-001", "1.00", 5)
+    # 正向履约链（商家商品 → 商家履约）
+    _, sku1 = _create_merchant_product_with_sku(
+        client, merchant, "Chain1", "CH2-001", "1.00", 5
+    )
     order_id = _create_pending_order(client, admin, user, sku1)
+    assert _pay_order(client, order_id).json()["data"]["status"] == "paid"
     assert (
-        _admin_set_status(client, admin, order_id, "paid").json()["data"]["status"]
-        == "paid"
+        client.post(f"/merchant/orders/{order_id}/prepare", headers=merchant)
+        .json()["data"]["status"]
+        == "preparing"
     )
     assert (
-        _admin_set_status(client, admin, order_id, "shipped").json()["data"]["status"]
+        client.post(f"/merchant/orders/{order_id}/ready", headers=merchant)
+        .json()["data"]["status"]
+        == "ready"
+    )
+    assert (
+        client.post(f"/merchant/orders/{order_id}/ship", headers=merchant)
+        .json()["data"]["status"]
         == "shipped"
     )
     assert (
-        _admin_set_status(client, admin, order_id, "completed").json()["data"]["status"]
+        client.post(f"/orders/{order_id}/confirm", headers=user)
+        .json()["data"]["status"]
         == "completed"
     )
 
-    # PENDING → CANCELLED
-    _, sku2 = _create_product_with_sku(client, admin, "Chain2", "CH-002", "1.00", 5)
+    # PENDING → CANCELLED（客户取消）
+    _, sku2 = _create_merchant_product_with_sku(
+        client, merchant, "Chain2", "CH2-002", "1.00", 5
+    )
     order_id2 = _create_pending_order(client, admin, user, sku2)
-    resp = _admin_set_status(client, admin, order_id2, "cancelled")
+    resp = client.post(f"/orders/{order_id2}/cancel", headers=user)
     assert resp.json()["data"]["status"] == "cancelled"
 
 
 @pytest.mark.parametrize(
-    "source_status, illegal_target",
+    "source_status, action, actor",
     [
-        ("pending", "completed"),  # 不能跳级
-        ("pending", "shipped"),  # 不能跳级
-        ("paid", "cancelled"),  # 退款未实现，不允许支付后取消
-        ("paid", "pending"),  # 不能回退
-        ("shipped", "paid"),  # 不能回退
-        ("shipped", "pending"),  # 不能回退
-        ("cancelled", "paid"),  # 终态
-        ("completed", "shipped"),  # 终态
+        ("pending", "ship", "merchant"),  # 不能跳级：未支付不能发货
+        ("paid", "cancel", "customer"),  # 支付后不能取消（退款未实现）
+        ("preparing", "confirm", "customer"),  # 未发货不能确认收货
+        ("ready", "prepare", "merchant"),  # 不能重复备货
+        ("cancelled", "pay", None),  # 已取消订单不能再支付
+        ("completed", "confirm", "customer"),  # 终态不能重复确认
     ],
 )
 def test_illegal_order_status_transitions(
-    client, auth_headers, admin_headers, source_status, illegal_target
+    client,
+    auth_headers,
+    admin_headers,
+    merchant_headers,
+    source_status,
+    action,
+    actor,
 ):
-    """非法状态流转全部拒绝（10105），且原状态不变。"""
+    """非法状态流转全部拒绝（10105），且原状态不变。
+
+    业务规则变化（第二阶段）：ADMIN 万能跳状态接口已移除，
+    非法流转改由真实业务动作（支付回调/商家履约/客户操作）验证。
+    """
     admin = admin_headers()
+    merchant = merchant_headers()
     user = auth_headers()
-    _, sku_id = _create_product_with_sku(
+    _, sku_id = _create_merchant_product_with_sku(
         client,
-        admin,
-        f"Illegal-{source_status}-{illegal_target}",
-        f"IL-{source_status[:2]}-{illegal_target[:2]}",
+        merchant,
+        f"Illegal-{source_status}-{action}",
+        f"IL-{source_status[:3]}-{action[:3]}",
         "1.00",
         5,
     )
 
-    order_id = _order_at_status(client, admin, user, sku_id, source_status)
+    order_id = _order_at_status(client, admin, merchant, user, sku_id, source_status)
 
-    resp = _admin_set_status(client, admin, order_id, illegal_target)
+    if action == "pay":
+        resp = _pay_order(client, order_id)
+    elif actor == "merchant":
+        resp = client.post(f"/merchant/orders/{order_id}/{action}", headers=merchant)
+    else:
+        resp = client.post(f"/orders/{order_id}/{action}", headers=user)
+
     assert resp.status_code == 409
     assert resp.json()["code"] == 10105
 

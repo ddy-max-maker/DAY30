@@ -1,18 +1,20 @@
-"""支付流程测试：模拟用户支付订单（PENDING → PAID）。
+"""支付回调测试：模拟支付平台回调（PENDING → PAID）。
 
-使用 factory + db_session 直接写库准备 SKU 数据，
-通过 API 验证支付行为，确保测试隔离。
+业务规则变化（第二阶段）：支付入口从用户接口 POST /orders/{id}/pay
+改为支付平台回调 POST /payments/callback（无 JWT，真实场景用验签）。
+原"用户不能支付他人订单"用例随之失效——回调方是支付平台，
+不存在用户身份越权问题，改写为"已取消订单不能支付"。
 
 覆盖：
-1. 用户支付自己的 PENDING 订单成功
-2. 支付后状态变为 PAID
-3. 支付不存在的订单返回 404
-4. 用户不能支付其他人的订单（404）
-5. 重复支付失败（PAID → PAID，返回 409）
+1. 首次回调支付成功：PENDING → PAID
+2. 支付后状态持久化（GET 验证）
+3. 回调不存在的订单返回 404
+4. 已取消的订单不能支付（409）
+5. 重复回调（同流水号）幂等返回成功
+6. 已 PAID 但流水号不同 → 409 PaymentConflictError
+7. 支付成功后 paid_at 被记录
 """
 
-from app.core.security import create_access_token
-from tests.factories.user_factory import create_test_user
 
 
 def _auth(token: str) -> dict:
@@ -64,70 +66,123 @@ def _create_order(client, user_token, sku_id, quantity=1) -> int:
     return resp.json()["data"]["id"]
 
 
-# ================ 1. 用户支付自己的 PENDING 订单成功 ================
-def test_pay_own_pending_order_success(client, user_token, admin_token):
-    """用户支付自己的 PENDING 订单 → 200，status 变为 paid。"""
+def _callback(client, order_id, reference="PAY-001"):
+    """模拟支付平台回调。"""
+    return client.post(
+        "/payments/callback",
+        json={
+            "order_id": order_id,
+            "payment_reference": reference,
+            "status": "success",
+        },
+    )
+
+
+# ================ 1. 首次回调支付成功 ================
+def test_callback_pays_pending_order_success(client, user_token, admin_token):
+    """首次回调：PENDING → PAID，接口 200。"""
     sku_id = _create_sku(client, admin_token, "PayItem", "PAY-001", "50.00", 10)
     order_id = _create_order(client, user_token, sku_id)
 
-    response = client.post(f"/orders/{order_id}/pay", headers=_auth(user_token))
+    response = _callback(client, order_id, "PAY-20260924-0001")
     assert response.status_code == 200
     assert response.json()["code"] == 0
     assert response.json()["data"]["status"] == "paid"
 
 
-# ================ 2. 支付后状态变为 PAID（通过 GET 验证持久化）================
-def test_status_becomes_paid_after_payment(client, user_token, admin_token):
-    """支付后通过 GET 确认订单状态持久化为 paid。"""
+# ================ 2. 支付后状态持久化（GET 验证）================
+def test_status_becomes_paid_after_callback(client, user_token, admin_token):
+    """回调后通过 GET 确认订单状态持久化为 paid。"""
     sku_id = _create_sku(client, admin_token, "PayItem2", "PAY-002", "30.00", 10)
     order_id = _create_order(client, user_token, sku_id)
 
-    # 支付
-    pay_resp = client.post(f"/orders/{order_id}/pay", headers=_auth(user_token))
-    assert pay_resp.status_code == 200
+    assert _callback(client, order_id, "PAY-20260924-0002").status_code == 200
 
-    # 通过 GET 验证持久化
     response = client.get(f"/orders/{order_id}", headers=_auth(user_token))
     assert response.status_code == 200
-    assert response.json()["data"]["status"] == "paid"
+    data = response.json()["data"]
+    assert data["status"] == "paid"
+    assert data["paid_at"] is not None  # 支付时间被记录
 
 
-# ================ 3. 支付不存在的订单返回 404 ================
-def test_pay_nonexistent_order_404(client, user_token):
-    """支付不存在的订单 → OrderNotFoundError (404)。"""
-    response = client.post("/orders/99999/pay", headers=_auth(user_token))
+# ================ 3. 回调不存在的订单返回 404 ================
+def test_callback_nonexistent_order_404(client):
+    """回调不存在的订单 → OrderNotFoundError (404)。"""
+    response = _callback(client, 99999, "PAY-20260924-0003")
     assert response.status_code == 404
     assert response.json()["code"] == 10104  # OrderNotFoundError
 
 
-# ================ 4. 用户不能支付其他人的订单 ================
-def test_cannot_pay_others_order(client, user_token, admin_token, db_session):
-    """用户 B 支付用户 A 的订单 → 404（不泄露订单存在性）。"""
+# ================ 4. 已取消的订单不能支付 ================
+def test_callback_cancelled_order_409(client, user_token, admin_token):
+    """已取消订单收到回调 → 409（状态机拒绝 CANCELLED → PAID）。"""
     sku_id = _create_sku(client, admin_token, "PayItem3", "PAY-003", "20.00", 10)
     order_id = _create_order(client, user_token, sku_id)
 
-    # 创建用户 B
-    user_b = create_test_user(db_session, name="UserB", email="user_b_pay@example.com")
-    token_b = create_access_token(user_b.id)
+    # 先取消
+    cancel_resp = client.post(f"/orders/{order_id}/cancel", headers=_auth(user_token))
+    assert cancel_resp.status_code == 200
 
-    # 用户 B 尝试支付用户 A 的订单 → 404
-    response = client.post(f"/orders/{order_id}/pay", headers=_auth(token_b))
-    assert response.status_code == 404
-    assert response.json()["code"] == 10104
+    response = _callback(client, order_id, "PAY-20260924-0004")
+    assert response.status_code == 409
+    assert response.json()["code"] == 10105  # OrderStatusError
 
 
-# ================ 5. 重复支付失败 ================
-def test_repeat_payment_fails(client, user_token, admin_token):
-    """已支付的订单再次支付 → PAID → PAID 非法，返回 409。"""
+# ================ 5. 重复回调幂等 ================
+def test_duplicate_callback_is_idempotent(client, user_token, admin_token):
+    """同一流水号重复回调 → 200 幂等成功，订单保持 PAID 不重复修改。"""
     sku_id = _create_sku(client, admin_token, "PayItem4", "PAY-004", "15.00", 10)
     order_id = _create_order(client, user_token, sku_id)
 
-    # 第一次支付成功
-    first = client.post(f"/orders/{order_id}/pay", headers=_auth(user_token))
+    first = _callback(client, order_id, "PAY-20260924-0005")
     assert first.status_code == 200
     assert first.json()["data"]["status"] == "paid"
 
-    # 第二次支付失败（PAID → PAID 不在状态机白名单中）
-    second = client.post(f"/orders/{order_id}/pay", headers=_auth(user_token))
-    assert second.status_code == 409
-    assert second.json()["code"] == 10105  # OrderStatusError
+    second = _callback(client, order_id, "PAY-20260924-0005")
+    assert second.status_code == 200
+    assert second.json()["data"]["status"] == "paid"
+
+
+# ================ 6. 已 PAID 但流水号不同 → 409 ================
+def test_callback_with_different_reference_conflicts(client, user_token, admin_token):
+    """订单已支付，收到不同流水号的回调 → 409 PaymentConflictError。"""
+    sku_id = _create_sku(client, admin_token, "PayItem5", "PAY-005", "15.00", 10)
+    order_id = _create_order(client, user_token, sku_id)
+
+    assert _callback(client, order_id, "PAY-20260924-0006A").status_code == 200
+
+    response = _callback(client, order_id, "PAY-20260924-0006B")
+    assert response.status_code == 409
+    assert response.json()["code"] == 10109  # PaymentConflictError
+
+
+# ================ 7. 支付失败通知不改变订单状态 ================
+def test_failed_status_callback_does_not_change_order(client, user_token, admin_token):
+    """status=failed 的回调仅确认接收，订单保持 PENDING。"""
+    sku_id = _create_sku(client, admin_token, "PayItem6", "PAY-006", "15.00", 10)
+    order_id = _create_order(client, user_token, sku_id)
+
+    response = client.post(
+        "/payments/callback",
+        json={
+            "order_id": order_id,
+            "payment_reference": "PAY-20260924-0007",
+            "status": "failed",
+        },
+    )
+    assert response.status_code == 200
+
+    detail = client.get(f"/orders/{order_id}", headers=_auth(user_token))
+    assert detail.json()["data"]["status"] == "pending"
+
+
+# ================ 8. 用户不能直接把订单改成 PAID ================
+def test_customer_cannot_pay_directly(client, user_token, admin_token):
+    """业务规则变化：CUSTOMER 不再有直接支付接口（/orders/{id}/pay 已移除 → 404），
+    支付状态切换只能由支付回调触发。
+    """
+    sku_id = _create_sku(client, admin_token, "PayItem7", "PAY-007", "15.00", 10)
+    order_id = _create_order(client, user_token, sku_id)
+
+    response = client.post(f"/orders/{order_id}/pay", headers=_auth(user_token))
+    assert response.status_code == 404

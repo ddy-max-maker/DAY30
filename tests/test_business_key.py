@@ -178,7 +178,12 @@ def test_cancel_order_pending_to_cancelled(client, user_token, admin_token, db_s
 
 
 def test_double_cancel_fails(client, user_token, admin_token):
-    """已取消的订单再次取消 → OrderStatusError (409)。"""
+    """已取消的订单再次取消 → 幂等返回原订单（200）。
+
+    业务规则变化（第二阶段）：取消接口幂等化——拿到订单行锁后发现
+    已是 CANCELLED 时直接返回当前订单，不再抛 409；
+    重复取消不会重复恢复库存。
+    """
     sku_id = _create_sku(client, admin_token, stock=100)
 
     order_resp = client.post(
@@ -192,10 +197,10 @@ def test_double_cancel_fails(client, user_token, admin_token):
     first = client.post(f"/orders/{order_id}/cancel", headers=_auth(user_token))
     assert first.status_code == 200
 
-    # 第二次取消失败
+    # 第二次取消：幂等返回原订单
     second = client.post(f"/orders/{order_id}/cancel", headers=_auth(user_token))
-    assert second.status_code == 409
-    assert second.json()["code"] == 10105
+    assert second.status_code == 200
+    assert second.json()["data"]["status"] == "cancelled"
 
 
 # ================ 7. 用户不能查看其他用户订单 ================
