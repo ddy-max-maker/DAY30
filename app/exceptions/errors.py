@@ -167,6 +167,27 @@ class CrossMerchantOrderError(BusinessError):
         super().__init__(message=message, code=10107, status_code=409)
 
 
+class IdempotencyConflictError(BusinessError):
+    """幂等键冲突：同一个 Idempotency-Key 已被用于不同内容的请求。
+
+    HTTP 409 Conflict，客户端必须更换新的 Idempotency-Key 重试。
+    """
+
+    def __init__(self, message: str = "Idempotency-Key 已用于不同的请求"):
+        super().__init__(message=message, code=10108, status_code=409)
+
+
+class PaymentConflictError(BusinessError):
+    """支付冲突：订单已支付但收到不同的支付流水号，
+    或支付流水号已被其他订单占用。
+
+    HTTP 409 Conflict。
+    """
+
+    def __init__(self, message: str = "支付信息冲突"):
+        super().__init__(message=message, code=10109, status_code=409)
+
+
 # ---------- 购物车相关 ----------
 class CartError(BusinessError):
     """购物车操作失败（Redis 异常等）：HTTP 500 Internal Server Error。
