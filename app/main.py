@@ -20,6 +20,7 @@ from app.routers.auth import router as auth_router
 from app.routers.cart import router as cart_router
 from app.routers.merchant import router as merchant_router
 from app.routers.order import router as order_router
+from app.routers.payment import router as payment_router
 from app.routers.product import router as product_router
 from app.routers.user import router as user_router
 
@@ -81,6 +82,7 @@ app.include_router(order_router)
 app.include_router(admin_router)
 app.include_router(merchant_router)
 app.include_router(cart_router)
+app.include_router(payment_router)
 
 # ---------- 注册异常处理器（覆盖 FastAPI 默认行为）----------
 # 自定义业务异常

@@ -13,7 +13,7 @@ from app.dependencies.permissions import require_admin
 from app.models.user import User
 from app.schemas.common import ResponseModel
 from app.schemas.inventory import InventoryResponse, InventoryUpdate
-from app.schemas.order import OrderResponse, OrderStatusUpdate
+from app.schemas.order import OrderResponse
 from app.schemas.product import (
     ProductCreate,
     ProductResponse,
@@ -115,7 +115,12 @@ def update_inventory(
     return ResponseModel(data=InventoryResponse.model_validate(inventory))
 
 
-# ================ 订单管理 ================
+# ================ 订单管理（只读）================
+# 第二阶段起 ADMIN 不再拥有修改订单状态的接口：
+# 状态变更必须走状态机（支付回调 / MERCHANT 履约动作 / CUSTOMER 取消与确认），
+# 避免万能跳状态破坏订单一致性。管理员只负责查看。
+
+
 @router.get("/orders", response_model=ResponseModel[list[OrderResponse]])
 def list_all_orders(
     admin: AdminDep,
@@ -123,17 +128,3 @@ def list_all_orders(
 ) -> ResponseModel[list[OrderResponse]]:
     orders = order_service.get_all_orders(db)
     return ResponseModel(data=[OrderResponse.model_validate(o) for o in orders])
-
-
-@router.patch(
-    "/orders/{order_id}/status",
-    response_model=ResponseModel[OrderResponse],
-)
-def update_order_status(
-    order_id: int,
-    data: OrderStatusUpdate,
-    admin: AdminDep,
-    db: DbDep,
-) -> ResponseModel[OrderResponse]:
-    order = order_service.update_order_status(db, order_id, data)
-    return ResponseModel(data=OrderResponse.model_validate(order))

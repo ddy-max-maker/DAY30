@@ -150,3 +150,43 @@ def get_my_order(
         raise OrderNotFoundError()
 
     return ResponseModel(data=OrderResponse.model_validate(order))
+
+
+# ================ 订单履约动作（PAID → PREPARING → READY → SHIPPED）================
+@router.post("/orders/{order_id}/prepare", response_model=ResponseModel[OrderResponse])
+def prepare_order(
+    order_id: int,
+    merchant: MerchantDep,
+    db: DbDep,
+) -> ResponseModel[OrderResponse]:
+    """备货（仅 PAID → PREPARING，非本人订单返回 404）。"""
+    order = order_service.perform_order_action(
+        db, order_id, merchant.id, merchant.role, "prepare"
+    )
+    return ResponseModel(data=OrderResponse.model_validate(order))
+
+
+@router.post("/orders/{order_id}/ready", response_model=ResponseModel[OrderResponse])
+def ready_order(
+    order_id: int,
+    merchant: MerchantDep,
+    db: DbDep,
+) -> ResponseModel[OrderResponse]:
+    """备货完成（仅 PREPARING → READY）。"""
+    order = order_service.perform_order_action(
+        db, order_id, merchant.id, merchant.role, "ready"
+    )
+    return ResponseModel(data=OrderResponse.model_validate(order))
+
+
+@router.post("/orders/{order_id}/ship", response_model=ResponseModel[OrderResponse])
+def ship_order(
+    order_id: int,
+    merchant: MerchantDep,
+    db: DbDep,
+) -> ResponseModel[OrderResponse]:
+    """发货（仅 READY → SHIPPED，即进入配送中）。"""
+    order = order_service.perform_order_action(
+        db, order_id, merchant.id, merchant.role, "ship"
+    )
+    return ResponseModel(data=OrderResponse.model_validate(order))
