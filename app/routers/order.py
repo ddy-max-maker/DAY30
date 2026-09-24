@@ -1,4 +1,7 @@
-"""普通用户订单接口：下单、查询、取消。"""
+"""消费者订单接口：下单、查询、取消、支付。
+
+仅 CUSTOMER 可访问（require_customer）：MERCHANT/ADMIN 不是订单消费角色。
+"""
 
 from typing import Annotated
 
@@ -6,7 +9,7 @@ from fastapi import APIRouter, Depends
 from sqlalchemy.orm import Session
 
 from app.database.database import get_db
-from app.dependencies.auth import get_current_user
+from app.dependencies.permissions import require_customer
 from app.exceptions.errors import OrderNotFoundError
 from app.models.user import User
 from app.schemas.common import ResponseModel
@@ -19,7 +22,7 @@ router = APIRouter(prefix="/orders", tags=["Orders"])
 @router.post("", response_model=ResponseModel[OrderResponse])
 def create_order(
     order_data: OrderCreate,
-    current_user: Annotated[User, Depends(get_current_user)],
+    current_user: Annotated[User, Depends(require_customer)],
     db: Annotated[Session, Depends(get_db)],
 ) -> ResponseModel[OrderResponse]:
     """下单：客户端只提交 sku_id + quantity，金额由服务端计算。"""
@@ -29,7 +32,7 @@ def create_order(
 
 @router.get("", response_model=ResponseModel[list[OrderResponse]])
 def list_my_orders(
-    current_user: Annotated[User, Depends(get_current_user)],
+    current_user: Annotated[User, Depends(require_customer)],
     db: Annotated[Session, Depends(get_db)],
 ) -> ResponseModel[list[OrderResponse]]:
     """查看自己的全部订单。"""
@@ -40,7 +43,7 @@ def list_my_orders(
 @router.get("/{order_id}", response_model=ResponseModel[OrderResponse])
 def get_my_order(
     order_id: int,
-    current_user: Annotated[User, Depends(get_current_user)],
+    current_user: Annotated[User, Depends(require_customer)],
     db: Annotated[Session, Depends(get_db)],
 ) -> ResponseModel[OrderResponse]:
     """查看自己的订单详情（越权访问返回 404 而非 403，避免泄露订单存在性）。"""
@@ -55,7 +58,7 @@ def get_my_order(
 @router.post("/{order_id}/cancel", response_model=ResponseModel[OrderResponse])
 def cancel_my_order(
     order_id: int,
-    current_user: Annotated[User, Depends(get_current_user)],
+    current_user: Annotated[User, Depends(require_customer)],
     db: Annotated[Session, Depends(get_db)],
 ) -> ResponseModel[OrderResponse]:
     """取消自己的订单（仅 PENDING 状态可取消）。"""
@@ -66,7 +69,7 @@ def cancel_my_order(
 @router.post("/{order_id}/pay", response_model=ResponseModel[OrderResponse])
 async def pay_my_order(
     order_id: int,
-    current_user: Annotated[User, Depends(get_current_user)],
+    current_user: Annotated[User, Depends(require_customer)],
     db: Annotated[Session, Depends(get_db)],
 ) -> ResponseModel[OrderResponse]:
     """模拟用户支付订单（PENDING → PAID）。
