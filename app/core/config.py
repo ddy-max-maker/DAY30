@@ -41,6 +41,11 @@ class Settings(BaseSettings):
     # MQ 连接开关：测试环境置为 false，避免单测强依赖真实 RabbitMQ
     RABBITMQ_ENABLED: bool = True
 
+    # 模拟支付网关共享密钥：回调方需携带 X-Mock-Payment-Secret 请求头。
+    # 未配置（空字符串）时拒绝所有回调（默认安全姿态）。
+    # 真实生产环境应替换为支付平台数字签名验签机制。
+    MOCK_PAYMENT_SECRET: str = ""
+
     class Config:
         env_file = ENV_FILE
         extra = "ignore"

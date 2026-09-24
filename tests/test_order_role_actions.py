@@ -9,6 +9,7 @@
 6. ADMIN 调履约接口 → 403（ADMIN 只读）；万能跳状态接口已删除 → 404
 """
 
+from app.core.config import settings
 from app.core.security import create_access_token
 from tests.conftest import TestingSessionLocal
 from tests.factories.product_factory import create_test_product
@@ -57,6 +58,7 @@ def _paid_order(client, sku_id: int, user_id: int, reference="PAY-ROLE-0001") ->
             "payment_reference": reference,
             "status": "success",
         },
+        headers={"X-Mock-Payment-Secret": settings.MOCK_PAYMENT_SECRET},
     )
     assert callback.status_code == 200
     return order_id

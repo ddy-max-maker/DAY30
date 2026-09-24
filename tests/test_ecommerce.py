@@ -2,6 +2,7 @@
 
 import pytest
 
+from app.core.config import settings
 from tests.conftest import TestingSessionLocal
 
 
@@ -604,7 +605,7 @@ def _create_merchant_product_with_sku(
 
 
 def _pay_order(client, order_id, reference="PAY-CHAIN-0001"):
-    """模拟支付回调。"""
+    """模拟支付回调（带共享密钥头，模拟支付平台身份）。"""
     return client.post(
         "/payments/callback",
         json={
@@ -612,6 +613,7 @@ def _pay_order(client, order_id, reference="PAY-CHAIN-0001"):
             "payment_reference": reference,
             "status": "success",
         },
+        headers={"X-Mock-Payment-Secret": settings.MOCK_PAYMENT_SECRET},
     )
 
 

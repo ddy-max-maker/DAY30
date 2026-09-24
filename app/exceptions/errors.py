@@ -188,6 +188,19 @@ class PaymentConflictError(BusinessError):
         super().__init__(message=message, code=10109, status_code=409)
 
 
+class PaymentAuthError(BusinessError):
+    """支付回调身份校验失败：X-Mock-Payment-Secret 缺失或不匹配。
+
+    模拟支付网关用共享密钥模拟支付平台身份校验；
+    真实生产环境应替换为支付平台的数字签名验签机制。
+
+    HTTP 401 Unauthorized（调用者身份未认证）。
+    """
+
+    def __init__(self, message: str = "支付回调密钥无效"):
+        super().__init__(message=message, code=10110, status_code=401)
+
+
 # ---------- 购物车相关 ----------
 class CartError(BusinessError):
     """购物车操作失败（Redis 异常等）：HTTP 500 Internal Server Error。

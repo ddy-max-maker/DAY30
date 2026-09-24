@@ -35,6 +35,7 @@ import pytest
 
 from app.core.config import settings
 from app.mq import consumer, rabbitmq
+from app.mq import publisher as mq_publisher
 from app.mq.consumer import (
     build_dead_letter_message,
     build_retry_message,
@@ -46,7 +47,6 @@ from app.mq.publisher import (
     build_order_paid_message,
     publish_order_paid_event,
 )
-from app.mq import publisher as mq_publisher
 
 
 def _auth(token: str) -> dict:
@@ -169,6 +169,7 @@ def test_payment_callback_does_not_publish_event(
             "payment_reference": "PAY-MQ-0001",
             "status": "success",
         },
+        headers={"X-Mock-Payment-Secret": settings.MOCK_PAYMENT_SECRET},
     )
     assert response.status_code == 200
     assert response.json()["data"]["status"] == "paid"

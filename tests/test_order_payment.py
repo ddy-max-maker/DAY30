@@ -1,11 +1,13 @@
 """支付回调测试：模拟支付平台回调（PENDING → PAID）。
 
 业务规则变化（第二阶段）：支付入口从用户接口 POST /orders/{id}/pay
-改为支付平台回调 POST /payments/callback（无 JWT，真实场景用验签）。
-原"用户不能支付他人订单"用例随之失效——回调方是支付平台，
-不存在用户身份越权问题，改写为"已取消订单不能支付"。
+改为支付平台回调 POST /payments/callback。回调方是支付平台而非终端
+用户，不用 JWT 鉴权，但必须携带共享密钥头 X-Mock-Payment-Secret
+（模拟支付平台身份校验，真实环境为数字签名验签）。
+原"用户不能支付他人订单"用例随之失效——改写为"已取消订单不能支付"。
 
 覆盖：
+0. 回调鉴权：密钥缺失 / 错误 → 401
 1. 首次回调支付成功：PENDING → PAID
 2. 支付后状态持久化（GET 验证）
 3. 回调不存在的订单返回 404
@@ -13,7 +15,15 @@
 5. 重复回调（同流水号）幂等返回成功
 6. 已 PAID 但流水号不同 → 409 PaymentConflictError
 7. 支付成功后 paid_at 被记录
+8. status=failed 回调需通过鉴权，但不改变订单状态
+9. CUSTOMER 不再有直接支付接口
 """
+
+from app.core.config import settings
+
+# 模拟支付平台共享密钥（与服务端 .env 中 MOCK_PAYMENT_SECRET 一致）
+_MOCK_SECRET = settings.MOCK_PAYMENT_SECRET
+_PAY_HEADERS = {"X-Mock-Payment-Secret": _MOCK_SECRET}
 
 
 
@@ -66,8 +76,8 @@ def _create_order(client, user_token, sku_id, quantity=1) -> int:
     return resp.json()["data"]["id"]
 
 
-def _callback(client, order_id, reference="PAY-001"):
-    """模拟支付平台回调。"""
+def _callback(client, order_id, reference="PAY-001", headers=None):
+    """模拟支付平台回调（自动带共享密钥头）。"""
     return client.post(
         "/payments/callback",
         json={
@@ -75,7 +85,42 @@ def _callback(client, order_id, reference="PAY-001"):
             "payment_reference": reference,
             "status": "success",
         },
+        headers=headers if headers is not None else _PAY_HEADERS,
     )
+
+
+# ================ 0. 回调鉴权：密钥缺失 / 错误 → 401 ================
+def test_callback_missing_secret_returns_401(client, user_token, admin_token):
+    """未携带 X-Mock-Payment-Secret 头 → 401 PaymentAuthError。"""
+    sku_id = _create_sku(client, admin_token, "PayItem0", "PAY-000", "15.00", 10)
+    order_id = _create_order(client, user_token, sku_id)
+
+    response = client.post(
+        "/payments/callback",
+        json={
+            "order_id": order_id,
+            "payment_reference": "PAY-20260924-0000",
+            "status": "success",
+        },
+        # 不带密钥头
+    )
+    assert response.status_code == 401
+    assert response.json()["code"] == 10110  # PaymentAuthError
+
+
+def test_callback_wrong_secret_returns_401(client, user_token, admin_token):
+    """密钥错误 → 401 PaymentAuthError。"""
+    sku_id = _create_sku(client, admin_token, "PayItem0b", "PAY-000b", "15.00", 10)
+    order_id = _create_order(client, user_token, sku_id)
+
+    response = _callback(
+        client,
+        order_id,
+        "PAY-20260924-0000b",
+        headers={"X-Mock-Payment-Secret": "wrong-secret"},
+    )
+    assert response.status_code == 401
+    assert response.json()["code"] == 10110
 
 
 # ================ 1. 首次回调支付成功 ================
@@ -169,6 +214,7 @@ def test_failed_status_callback_does_not_change_order(client, user_token, admin_
             "payment_reference": "PAY-20260924-0007",
             "status": "failed",
         },
+        headers=_PAY_HEADERS,
     )
     assert response.status_code == 200
 
