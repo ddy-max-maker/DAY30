@@ -9,6 +9,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.exceptions.errors import (
+    CrossMerchantOrderError,
     OrderNotFoundError,
     SKUNotAvailableError,
     SKUNotFoundError,
@@ -40,16 +41,18 @@ def create_order(db: Session, user_id: int, data: OrderCreate) -> Order:
 
     流程：
       1. 遍历订单项，逐个校验 SKU 存在 + 可销售 + 库存足够
-      2. 扣减库存（SELECT FOR UPDATE 行级锁防超卖）
-      3. 用下单时的 SKU 名称和价格创建快照 OrderItem
-      4. 服务端累加计算 total_amount
-      5. 创建 Order，一次性 commit
+      2. 收集商品归属商家，校验单商家订单（跨商家直接拒绝）
+      3. 扣减库存（SELECT FOR UPDATE 行级锁防超卖）
+      4. 用下单时的 SKU 名称和价格创建快照 OrderItem
+      5. 服务端累加计算 total_amount
+      6. 创建 Order（归属唯一商家），一次性 commit
 
     事务边界：整个函数是一个事务。任意一步抛异常 → rollback，
     已扣的库存、已创建的 OrderItem 全部回滚。
     """
     order_items: list[OrderItem] = []
     total_amount = Decimal("0")
+    merchant_ids: set[int] = set()  # 收集订单内所有商品的归属商家，用于单商家校验
 
     try:
         for item_request in data.items:
@@ -66,16 +69,19 @@ def create_order(db: Session, user_id: int, data: OrderCreate) -> Order:
                     message=f"商品 {sku.product.name if sku.product else ''} 已下架"
                 )
 
-            # --- 3. 扣减库存（行级锁，同一事务内）---
+            # --- 3. 单商家订单校验：收集归属商家，跨商家下单直接拒绝（不拆单）---
+            merchant_ids.add(sku.product.merchant_id)
+
+            # --- 4. 扣减库存（行级锁，同一事务内）---
             # deduct_stock 内部用 SELECT ... FOR UPDATE，
             # 并发下单时第二个请求会阻塞，直到前一个事务提交
             deduct_stock(db, sku.id, item_request.quantity)
 
-            # --- 4. 计算小计（服务端定价，绝不信任客户端）---
+            # --- 5. 计算小计（服务端定价，绝不信任客户端）---
             subtotal = sku.price * item_request.quantity
             total_amount += subtotal
 
-            # --- 5. 创建快照 OrderItem ---
+            # --- 6. 创建快照 OrderItem ---
             order_items.append(
                 OrderItem(
                     sku_id=sku.id,
@@ -86,10 +92,15 @@ def create_order(db: Session, user_id: int, data: OrderCreate) -> Order:
                 )
             )
 
-        # --- 6. 创建订单 + 关联订单项 ---
+        # --- 7. 跨商家校验：一个订单只允许购买同一商家的商品 ---
+        if len(merchant_ids) > 1:
+            raise CrossMerchantOrderError()
+
+        # --- 8. 创建订单 + 关联订单项（归属唯一商家）---
         order = Order(
             order_no=generate_order_no(),
             user_id=user_id,
+            merchant_id=merchant_ids.pop(),
             status=OrderStatus.PENDING,
             total_amount=total_amount,
         )
@@ -112,6 +123,17 @@ def get_orders_by_user(db: Session, user_id: int) -> list[Order]:
         db.scalars(
             select(Order)
             .where(Order.user_id == user_id)
+            .order_by(Order.created_at.desc())
+        ).all()
+    )
+
+
+def get_orders_by_merchant(db: Session, merchant_id: int) -> list[Order]:
+    """商家查看包含自己商品的订单（按订单归属商家过滤）。"""
+    return list(
+        db.scalars(
+            select(Order)
+            .where(Order.merchant_id == merchant_id)
             .order_by(Order.created_at.desc())
         ).all()
     )

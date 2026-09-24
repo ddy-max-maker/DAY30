@@ -34,6 +34,7 @@ class OrderResponse(BaseModel):
     id: int
     order_no: str
     user_id: int
+    merchant_id: int
     status: OrderStatus
     total_amount: Decimal
     created_at: datetime

@@ -44,6 +44,12 @@ class Order(Base):
     # UUID 业务订单号格式为 ORD + 32 位 hex（共 35 字符），列宽留余量到 64
     order_no: Mapped[str] = mapped_column(String(64), nullable=False, unique=True)
     user_id: Mapped[int] = mapped_column(ForeignKey("users.id"), nullable=False)
+    # 订单归属商家：下单时取订单内商品的归属商家写入（当前版本限定单商家订单，
+    # 跨商家下单返回 409）。存量数据由 Alembic 迁移通过
+    # order_items -> skus -> products 链路回填。
+    merchant_id: Mapped[int] = mapped_column(
+        ForeignKey("users.id"), nullable=False, index=True
+    )
     status: Mapped[OrderStatus] = mapped_column(
         Enum(OrderStatus, values_callable=lambda x: [e.value for e in x]),
         nullable=False,
@@ -58,7 +64,12 @@ class Order(Base):
         DateTime, server_default=func.now(), onupdate=func.now(), nullable=False
     )
 
-    user: Mapped["User"] = relationship("User", back_populates="orders")
+    # user_id 与 merchant_id 两个外键都指向 users.id，
+    # 必须显式指定 foreign_keys，否则 SQLAlchemy 无法消除歧义
+    user: Mapped["User"] = relationship(
+        "User", foreign_keys=[user_id], back_populates="orders"
+    )
+    merchant: Mapped["User"] = relationship("User", foreign_keys=[merchant_id])
     items: Mapped[list["OrderItem"]] = relationship(
         "OrderItem", back_populates="order", cascade="all, delete-orphan"
     )

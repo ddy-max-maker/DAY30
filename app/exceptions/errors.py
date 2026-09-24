@@ -157,6 +157,16 @@ class OrderNotEmptyError(BusinessError):
         super().__init__(message=message, code=10106, status_code=400)
 
 
+class CrossMerchantOrderError(BusinessError):
+    """跨商家下单：当前版本一个订单只能购买同一商家的商品。
+
+    请求内容与订单归属规则冲突（不拆单）：HTTP 409 Conflict。
+    """
+
+    def __init__(self, message: str = "当前版本一个订单只能购买同一商家的商品"):
+        super().__init__(message=message, code=10107, status_code=409)
+
+
 # ---------- 购物车相关 ----------
 class CartError(BusinessError):
     """购物车操作失败（Redis 异常等）：HTTP 500 Internal Server Error。
