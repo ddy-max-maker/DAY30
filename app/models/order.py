@@ -3,7 +3,16 @@ from datetime import datetime
 from decimal import Decimal
 from typing import TYPE_CHECKING
 
-from sqlalchemy import DateTime, Enum, ForeignKey, Integer, Numeric, String, func
+from sqlalchemy import (
+    DateTime,
+    Enum,
+    ForeignKey,
+    Integer,
+    Numeric,
+    String,
+    UniqueConstraint,
+    func,
+)
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.database.database import Base
@@ -14,20 +23,22 @@ if TYPE_CHECKING:
 
 
 class OrderStatus(enum.Enum):
-    """订单状态机（当前 MVP）：
+    """订单状态机（第二阶段：接入履约链路）：
 
-    PENDING ──→ PAID ──→ SHIPPED ──→ COMPLETED
-       │
-       └──→ CANCELLED
+    PENDING ──→ PAID ──→ PREPARING ──→ READY ──→ SHIPPED ──→ COMPLETED
+       │                                           ↑
+       └──→ CANCELLED                    （SHIPPED = 配送中/DELIVERING）
 
-    允许的流转（与 order_service.ALLOWED_STATUS_TRANSITIONS 一致）：
-      PENDING   → PAID / CANCELLED
-      PAID      → SHIPPED
-      SHIPPED   → COMPLETED
-      CANCELLED → （终态，不可再流转）
-      COMPLETED → （终态，不可再流转）
+    允许的流转（与 order_state_machine.TRANSITIONS 一致）：
+      PENDING   → PAID（支付回调）/ CANCELLED（CUSTOMER 取消）
+      PAID      → PREPARING（MERCHANT 备货）
+      PREPARING → READY（MERCHANT 备货完成）
+      READY     → SHIPPED（MERCHANT 发货）
+      SHIPPED   → COMPLETED（CUSTOMER 确认收货）
+      CANCELLED / COMPLETED → 终态，不可再流转
 
-    注意：PAID 暂不允许取消为 CANCELLED，因为退款流程尚未实现。
+    命名兼容说明：PENDING 即"待支付"（PENDING_PAYMENT），
+    SHIPPED 即"配送中"（DELIVERING），保留现有数据库枚举值不做改名迁移。
     """
 
     PENDING = "pending"
@@ -35,10 +46,19 @@ class OrderStatus(enum.Enum):
     CANCELLED = "cancelled"
     SHIPPED = "shipped"
     COMPLETED = "completed"
+    PREPARING = "preparing"
+    READY = "ready"
 
 
 class Order(Base):
     __tablename__ = "orders"
+    # 幂等键唯一约束：同一用户 + 同一 Idempotency-Key 只允许一个订单。
+    # MySQL 唯一索引对 NULL 不生效，旧订单（无 key）不受影响。
+    __table_args__ = (
+        UniqueConstraint(
+            "user_id", "idempotency_key", name="uq_orders_user_idempotency_key"
+        ),
+    )
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     # UUID 业务订单号格式为 ORD + 32 位 hex（共 35 字符），列宽留余量到 64
@@ -57,6 +77,19 @@ class Order(Base):
         server_default="pending",
     )
     total_amount: Mapped[Decimal] = mapped_column(Numeric(10, 2), nullable=False)
+    # ---- 幂等字段（创建订单）----
+    # 客户端 Header Idempotency-Key：同一次下单动作重试必须携带同一个 key。
+    # request_hash：规范化后 (sku_id, quantity) 序列的 SHA-256，
+    # 用于拦截"同 key 不同内容"的请求（返回 409）。
+    idempotency_key: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    request_hash: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    # ---- 支付字段（模拟支付回调）----
+    # 支付平台流水号：同一流水号只能绑定一个订单（UNIQUE），
+    # NULL 兼容未支付订单（MySQL 唯一索引不约束 NULL）。
+    payment_reference: Mapped[str | None] = mapped_column(
+        String(64), nullable=True, unique=True
+    )
+    paid_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     created_at: Mapped[datetime] = mapped_column(
         DateTime, server_default=func.now(), nullable=False
     )
