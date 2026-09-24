@@ -9,12 +9,11 @@ from sqlalchemy.orm import Session
 from app.core.config import ALGORITHM, SECRET_KEY
 from app.database.database import get_db
 from app.exceptions.errors import (
-    PermissionDeniedError,
     TokenExpiredError,
     TokenInvalidError,
     UserNotFoundError,
 )
-from app.models.user import User, UserRole
+from app.models.user import User
 
 # auto_error=False：未提供 Authorization 时不自动抛 403，
 # 而是返回 None，由 get_current_user 统一抛 401（TokenInvalidError）。
@@ -48,18 +47,5 @@ def get_current_user(
     return user
 
 
-def require_admin(
-    current_user: Annotated[User, Depends(get_current_user)],
-) -> User:
-    """管理员权限依赖：角色不是 ADMIN 时抛 403 PermissionDeniedError。
-
-    用法（Router 层）：
-
-        @router.post("/admin/products", dependencies=[Depends(require_admin)])
-        # 或
-        def create_product(admin: Annotated[User, Depends(require_admin)]):
-            ...
-    """
-    if current_user.role != UserRole.ADMIN:
-        raise PermissionDeniedError(message="需要管理员权限")
-    return current_user
+# 角色权限依赖已迁移到 app/dependencies/permissions.py 统一管理：
+# require_admin / require_merchant / require_customer
