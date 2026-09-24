@@ -3,7 +3,11 @@
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from app.exceptions.errors import InsufficientStockError, SKUNotFoundError
+from app.exceptions.errors import (
+    InsufficientStockError,
+    PermissionDeniedError,
+    SKUNotFoundError,
+)
 from app.models.inventory import Inventory
 
 
@@ -11,12 +15,21 @@ def get_inventory_by_sku(db: Session, sku_id: int) -> Inventory | None:
     return db.scalar(select(Inventory).where(Inventory.sku_id == sku_id))
 
 
-def update_stock(db: Session, sku_id: int, stock: int) -> Inventory:
-    """管理员直接设置库存数量。"""
+def update_stock(
+    db: Session, sku_id: int, stock: int, merchant_id: int | None = None
+) -> Inventory:
+    """直接设置库存数量。
+
+    merchant_id 非 None 时校验归属（商家只能修改自己商品的库存），
+    None 表示管理员操作（不校验归属）。
+    """
 
     inventory = get_inventory_by_sku(db, sku_id)
     if inventory is None:
         raise SKUNotFoundError(message="SKU 库存记录不存在")
+    if merchant_id is not None:
+        if inventory.sku.product.merchant_id != merchant_id:
+            raise PermissionDeniedError(message="无权操作其他商家的库存")
 
     inventory.stock = stock
     inventory.version += 1

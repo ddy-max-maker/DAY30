@@ -9,7 +9,7 @@ from fastapi import APIRouter, Depends
 from sqlalchemy.orm import Session
 
 from app.database.database import get_db
-from app.dependencies.auth import require_admin
+from app.dependencies.permissions import require_admin
 from app.models.user import User
 from app.schemas.common import ResponseModel
 from app.schemas.inventory import InventoryResponse, InventoryUpdate
@@ -37,7 +37,15 @@ def create_product(
     admin: AdminDep,
     db: DbDep,
 ) -> ResponseModel[ProductResponse]:
-    product = product_service.create_product(db, data)
+    """ADMIN 创建商品（兼容逻辑）。
+
+    业务语义上 ADMIN 是平台管理员，不应等价于 MERCHANT；这里为兼容
+    老的 /admin/products 接口暂时保留，归属写入 admin.id。后续应改为：
+      方案A：ADMIN 不直接创建商品，只负责审核/下架（推荐）
+      方案B：建立 Shop 业务实体，Product→shop_id，Shop→owner_user_id
+    本阶段不上方案 B，避免范围扩大；但应逐渐取消此兼容逻辑。
+    """
+    product = product_service.create_product(db, data, merchant_id=admin.id)
     return ResponseModel(data=ProductResponse.model_validate(product))
 
 

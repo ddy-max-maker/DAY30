@@ -2,13 +2,14 @@ import enum
 from datetime import datetime
 from typing import TYPE_CHECKING
 
-from sqlalchemy import DateTime, Enum, Integer, String, Text, func
+from sqlalchemy import DateTime, Enum, ForeignKey, Integer, String, Text, func
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.database.database import Base
 
 if TYPE_CHECKING:
     from app.models.sku import SKU
+    from app.models.user import User
 
 
 class ProductStatus(enum.Enum):
@@ -24,6 +25,11 @@ class Product(Base):
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     name: Mapped[str] = mapped_column(String(200), nullable=False)
     description: Mapped[str | None] = mapped_column(Text, nullable=True)
+    # 商品归属：一个商品只属于一个商家；创建时由服务端写入 current_user.id，
+    # 绝不信任客户端传值。存量数据由 Alembic 迁移回填。
+    merchant_id: Mapped[int] = mapped_column(
+        ForeignKey("users.id"), nullable=False, index=True
+    )
     status: Mapped[ProductStatus] = mapped_column(
         Enum(ProductStatus, values_callable=lambda x: [e.value for e in x]),
         nullable=False,
@@ -37,6 +43,7 @@ class Product(Base):
         DateTime, server_default=func.now(), onupdate=func.now(), nullable=False
     )
 
+    merchant: Mapped["User"] = relationship("User")
     skus: Mapped[list["SKU"]] = relationship(
         "SKU", back_populates="product", cascade="all, delete-orphan"
     )

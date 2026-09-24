@@ -29,6 +29,7 @@ class ProductResponse(BaseModel):
     name: str
     description: str | None
     status: ProductStatus
+    merchant_id: int
     created_at: datetime
     updated_at: datetime
 
