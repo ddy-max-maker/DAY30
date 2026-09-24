@@ -10,21 +10,20 @@
 1. RabbitMQ 配置读取正常
 2. publisher 构造的消息体正确
 3. routing_key 正确
-4. 支付接口调用后触发 publish（order_id / user_id 正确）
-5. MQ 发送失败不影响支付结果（订单仍为 paid，接口 200）
-6. 未连接时真实 publisher 抛异常（由调用方捕获记日志）
-7. publisher channel 启用 confirm 的配置（常量层面）
-8. retry queue 名称 / TTL / DLX 配置正确
-9. DLX / DLQ / dead routing key 配置正确
-10. 消费成功后 ACK（mock 消息对象）
-11. 第一次处理失败 → retry_count 0→1，发布 retry，不进 DLQ
-12. 第二次处理失败 → retry_count 正确增加
-13. 达到最大重试 → 进入 DLQ，不再发布 retry
-14. retry publish 成功后才 ACK 原消息
-15. retry publish 失败时原消息不能被 ACK
-16. DLQ publish 失败时原消息不能被 ACK
-17. 重试消息保持原业务 body
-18. 原有支付 publish 测试继续通过
+4. 支付回调后不触发任何 MQ 发布（第二阶段修正：MQ 移出支付链路，
+   避免"commit 后 publish"的双写一致性问题，第三阶段 Outbox 恢复）
+5. 未连接时真实 publisher 抛异常（由调用方捕获记日志）
+6. publisher channel 启用 confirm 的配置（常量层面）
+7. retry queue 名称 / TTL / DLX 配置正确
+8. DLX / DLQ / dead routing key 配置正确
+9. 消费成功后 ACK（mock 消息对象）
+10. 第一次处理失败 → retry_count 0→1，发布 retry，不进 DLQ
+11. 第二次处理失败 → retry_count 正确增加
+12. 达到最大重试 → 进入 DLQ，不再发布 retry
+13. retry publish 成功后才 ACK 原消息
+14. retry publish 失败时原消息不能被 ACK
+15. DLQ publish 失败时原消息不能被 ACK
+16. 重试消息保持原业务 body
 """
 
 import asyncio
@@ -47,7 +46,7 @@ from app.mq.publisher import (
     build_order_paid_message,
     publish_order_paid_event,
 )
-from app.services import payment_service
+from app.mq import publisher as mq_publisher
 
 
 def _auth(token: str) -> dict:
@@ -141,25 +140,27 @@ def test_routing_key_is_order_paid():
     assert rabbitmq.ORDER_PAID_QUEUE == "order_paid_queue"
 
 
-# ================ 4. 支付回调触发 publish ================
-def test_pay_endpoint_publishes_event(client, user_token, admin_token, monkeypatch):
-    """业务规则变化（第二阶段）：支付入口改为 POST /payments/callback，
-    publish 断言迁移到 payment_service。"""
+# ================ 4. 支付回调不发布 MQ 事件 ================
+def test_payment_callback_does_not_publish_event(
+    client, user_token, admin_token, monkeypatch
+):
+    """第二阶段修正：MQ 发布移出支付回调链路。
 
-    sku_id = _create_sku(client, admin_token, sku_code="MQ-PUB-1")
+    "MySQL COMMIT 成功后再 publish" 存在双写一致性问题：
+    commit 成功但 publish 失败时，订单已支付而下游收不到事件。
+    第三阶段将以 Transactional Outbox 方式恢复（订单 + 事件表同事务提交）。
+    本测试回归断言：回调全程不触发 publish_order_paid_event。
+    """
+
+    sku_id = _create_sku(client, admin_token, sku_code="MQ-NOPUB-1")
     order_id = _create_pending_order(client, user_token, sku_id)
-
-    order_detail = client.get(f"/orders/{order_id}", headers=_auth(user_token)).json()[
-        "data"
-    ]
-    user_id = order_detail["user_id"]
 
     published: list[dict] = []
 
     async def fake_publish(pub_order_id, pub_user_id):
         published.append({"order_id": pub_order_id, "user_id": pub_user_id})
 
-    monkeypatch.setattr(payment_service, "publish_order_paid_event", fake_publish)
+    monkeypatch.setattr(mq_publisher, "publish_order_paid_event", fake_publish)
 
     response = client.post(
         "/payments/callback",
@@ -171,54 +172,8 @@ def test_pay_endpoint_publishes_event(client, user_token, admin_token, monkeypat
     )
     assert response.status_code == 200
     assert response.json()["data"]["status"] == "paid"
-    assert len(published) == 1
-    assert published[0] == {"order_id": order_id, "user_id": user_id}
-
-    # 重复回调（幂等）不重复发布事件
-    client.post(
-        "/payments/callback",
-        json={
-            "order_id": order_id,
-            "payment_reference": "PAY-MQ-0001",
-            "status": "success",
-        },
-    )
-    assert len(published) == 1
-
-
-# ================ 5. MQ 发送失败不影响支付 ================
-def test_publish_failure_does_not_break_payment(
-    client, user_token, admin_token, monkeypatch
-):
-
-    sku_id = _create_sku(client, admin_token, sku_code="MQ-PUB-2")
-    order_id = _create_pending_order(client, user_token, sku_id)
-
-    async def broken_publish(pub_order_id, pub_user_id):
-        raise RuntimeError("RabbitMQ 不可用")
-
-    monkeypatch.setattr(payment_service, "publish_order_paid_event", broken_publish)
-
-    response = client.post(
-        "/payments/callback",
-        json={
-            "order_id": order_id,
-            "payment_reference": "PAY-MQ-0002",
-            "status": "success",
-        },
-    )
-    assert response.status_code == 200
-    assert response.json()["data"]["status"] == "paid"
-    # 重复回调幂等成功（不再 409：同流水号回调幂等返回）
-    repeat = client.post(
-        "/payments/callback",
-        json={
-            "order_id": order_id,
-            "payment_reference": "PAY-MQ-0002",
-            "status": "success",
-        },
-    )
-    assert repeat.status_code == 200
+    # 支付成功但未发布任何 MQ 事件
+    assert published == []
 
 
 # ================ 5a. mandatory 消息不可路由 → DeliveryError ================
@@ -239,48 +194,6 @@ def test_publisher_propagates_delivery_error(monkeypatch):
 
     with pytest.raises(DeliveryError):
         asyncio.run(publish_order_paid_event(order_id=1, user_id=1))
-
-
-# ================ 5b. DeliveryError 不影响支付 ================
-def test_delivery_error_does_not_break_payment(
-    client, user_token, admin_token, monkeypatch
-):
-    """mandatory 消息不可路由 → DeliveryError → payment_callback_and_publish
-    捕获并记日志，支付仍成功返回 paid。
-    """
-    from aio_pika.exceptions import DeliveryError
-
-    sku_id = _create_sku(client, admin_token, sku_code="MQ-DELIV-1")
-    order_id = _create_pending_order(client, user_token, sku_id)
-
-    # Patch publisher 层的 exchange 获取，返回会抛 DeliveryError 的 mock
-    delivery_error = DeliveryError(None, MagicMock())
-    mock_exchange = MagicMock()
-    mock_exchange.publish = AsyncMock(side_effect=delivery_error)
-    monkeypatch.setattr(
-        "app.mq.publisher.get_order_events_exchange", lambda: mock_exchange
-    )
-
-    response = client.post(
-        "/payments/callback",
-        json={
-            "order_id": order_id,
-            "payment_reference": "PAY-MQ-0003",
-            "status": "success",
-        },
-    )
-    assert response.status_code == 200
-    assert response.json()["data"]["status"] == "paid"
-    # 重复回调幂等成功（同流水号），证明支付确实提交成功
-    repeat = client.post(
-        "/payments/callback",
-        json={
-            "order_id": order_id,
-            "payment_reference": "PAY-MQ-0003",
-            "status": "success",
-        },
-    )
-    assert repeat.status_code == 200
 
 
 # ================ 6. 未连接时真实 publisher 抛异常 ================

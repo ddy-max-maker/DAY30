@@ -19,22 +19,25 @@ router = APIRouter(prefix="/payments", tags=["Payments"])
 
 
 @router.post("/callback", response_model=ResponseModel[OrderResponse])
-async def payment_callback(
+def payment_callback(
     data: PaymentCallbackRequest,
     db: Annotated[Session, Depends(get_db)],
 ) -> ResponseModel[OrderResponse]:
     """支付回调：PENDING → PAID，幂等可重入。
 
-    - 首次回调：订单变为 PAID，记录流水号与支付时间，发布 order.paid 事件
+    - 首次回调：订单变为 PAID，记录流水号与支付时间
     - 重复回调（同流水号）：幂等返回成功，不重复执行后续业务
     - 已 PAID 但流水号不同 / 已取消订单支付：409
     - status=failed 的通知：仅确认接收，不修改订单状态
+
+    同步 def：FastAPI 自动放线程池执行，避免 FOR UPDATE 阻塞事件循环。
+    回调后不发布 MQ 事件（双写一致性问题，第三阶段 Outbox 恢复）。
     """
     if data.status != "success":
         # 支付失败通知不改变订单状态，直接确认接收（避免第三方重试风暴）
         return ResponseModel(data=None, message="回调已接收，订单状态未变更")
 
-    result = await payment_service.payment_callback_and_publish(
+    result = payment_service.payment_callback(
         db, data.order_id, data.payment_reference
     )
     return ResponseModel(data=OrderResponse.model_validate(result.order))
