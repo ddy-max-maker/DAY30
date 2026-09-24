@@ -2,6 +2,7 @@ services:
   backend:
     volumes:
       - ./app:/app/app
+      - ./alembic:/app/alembic
       - ./logs:/app/logs
       - ./tests:/app/tests
 
