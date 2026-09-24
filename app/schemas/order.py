@@ -37,14 +37,9 @@ class OrderResponse(BaseModel):
     merchant_id: int
     status: OrderStatus
     total_amount: Decimal
+    paid_at: datetime | None = None
     created_at: datetime
     updated_at: datetime
     items: list[OrderItemResponse] = []
 
     model_config = ConfigDict(from_attributes=True)
-
-
-class OrderStatusUpdate(BaseModel):
-    """管理员修改订单状态。"""
-
-    status: OrderStatus
