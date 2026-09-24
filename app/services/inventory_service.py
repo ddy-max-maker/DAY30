@@ -6,10 +6,14 @@
     SET stock = stock - :quantity
     WHERE sku_id = :sku_id AND stock >= :quantity
 
-- 单条 SQL 原子完成"检查 + 扣减"，不存在"先读后写"的并发窗口；
-- rowcount == 0 表示库存不足（记录存在性已提前校验），直接 409；
-- 相比 SELECT FOR UPDATE + ORM 赋值：锁持有时间更短，
-  且从根上杜绝"两个事务都读到旧 stock 再相减"的超卖路径。
+- 单条 SQL 把"检查库存 + 扣减库存"合并成一个数据库原子操作，
+  避免先 SELECT 再 UPDATE 两步之间出现竞态窗口；
+- 注意：条件 UPDATE 仍会对目标行加排他锁，并发时后到事务会等待
+  前序事务释放锁——它的优势不是"不等待锁"，而是从根上杜绝
+  "两个事务都读到旧 stock 再相减"的超卖路径；
+- rowcount == 0 的语义依赖存在性前提：库存行已确认存在时（见
+  deduct_stock 先行探测），rowcount == 0 等价于 stock < quantity → 409；
+  若不做存在性区分，rowcount == 0 也可能是记录根本不存在 → 应 404。
 
 选择 MySQL 而非 Redis 分布式锁的理由：
 1. MySQL 本身就是库存最终数据源，单库内 UPDATE 天然一致；

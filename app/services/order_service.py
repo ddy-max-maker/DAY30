@@ -67,7 +67,8 @@ def create_order(
       1. 幂等预检：同用户 + 同 key → hash 相同返回原订单，不同抛 409
       2. 一次查询所有 SKU，校验存在 + 可销售 + 单商家订单
       3. 按 sku_id 升序逐个条件原子 UPDATE 扣库存
-         （统一加锁顺序，避免多 SKU 并发下单死锁）
+         （统一加锁顺序，显著降低多 SKU 并发下单时
+         因锁获取顺序不同导致的死锁概率）
       4. 用下单时的 SKU 名称和价格创建快照 OrderItem
       5. 服务端累加计算 total_amount（绝不信任客户端）
       6. 创建 Order（归属唯一商家），一次性 commit
@@ -134,7 +135,7 @@ def create_order(
         if len(merchant_ids) > 1:
             raise CrossMerchantOrderError()
 
-        # --- 3. 按 sku_id 升序条件原子扣库存（统一加锁顺序防死锁）---
+        # --- 3. 按 sku_id 升序条件原子扣库存（统一加锁顺序，降低死锁概率）---
         for item_request in sorted(data.items, key=lambda i: i.sku_id):
             deduct_stock(db, item_request.sku_id, item_request.quantity)
 
