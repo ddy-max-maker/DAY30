@@ -71,9 +71,13 @@ def test_403_response_still_has_request_id(client, auth_headers):
     assert response.headers["X-Request-ID"]
 
 
-def test_404_response_still_has_request_id(client):
-    """404 请求仍返回 request_id。业务 404：访问不存在的用户。"""
-    response = client.get("/users/999999")
+def test_404_response_still_has_request_id(client, admin_headers):
+    """404 请求仍返回 request_id。业务 404：管理员访问不存在的用户。
+
+    /users/{id} 现在仅 ADMIN 可访问（三角色 RBAC），需带 admin token
+    才能到达业务层 404，否则会在权限层被 401 拦截。
+    """
+    response = client.get("/users/999999", headers=admin_headers())
     assert response.status_code == 404
     assert "X-Request-ID" in response.headers
     assert response.headers["X-Request-ID"]

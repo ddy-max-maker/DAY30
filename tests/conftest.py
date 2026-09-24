@@ -20,7 +20,11 @@ from app.core.security import create_access_token
 from app.database.database import Base, get_db
 from app.database.redis import redis_client
 from app.main import app as fastapi_app
-from tests.factories.user_factory import create_test_admin, create_test_user
+from tests.factories.user_factory import (
+    create_test_admin,
+    create_test_merchant,
+    create_test_user,
+)
 
 # 确保所有 ORM Model 都被注册到 Base.metadata
 test_database_url = URL.create(
@@ -87,7 +91,7 @@ def client():
 
 @pytest.fixture
 def user_token(db_session):
-    """创建一个普通用户并返回其 JWT token 字符串。
+    """创建一个普通消费者并返回其 JWT token 字符串。
 
     使用 factory 直接写库，不经过注册接口，避免依赖接口行为。
     """
@@ -100,6 +104,13 @@ def admin_token(db_session):
     """创建一个管理员用户并返回其 JWT token 字符串。"""
     admin = create_test_admin(db_session)
     return create_access_token(admin.id)
+
+
+@pytest.fixture
+def merchant_token(db_session):
+    """创建一个商家用户并返回其 JWT token 字符串。"""
+    merchant = create_test_merchant(db_session)
+    return create_access_token(merchant.id)
 
 
 @pytest.fixture
@@ -167,3 +178,41 @@ def admin_headers(client):
         return {"Authorization": f"Bearer {token}"}
 
     return create_admin_headers
+
+
+@pytest.fixture
+def merchant_headers(client):
+    """通过写库创建 MERCHANT 用户，登录后返回 Authorization header dict。
+
+    支持通过 name/email 参数创建多个商家（如 merchant A / merchant B）。
+    """
+
+    def create_merchant_headers(
+        name="Merchant", email="merchant@example.com", password="12345678"
+    ):
+        from app.core.security import hash_password
+        from app.models.user import User, UserRole
+
+        db = TestingSessionLocal()
+        merchant = User(
+            name=name,
+            email=email,
+            password_hash=hash_password(password),
+            role=UserRole.MERCHANT,
+        )
+        db.add(merchant)
+        db.commit()
+        db.refresh(merchant)
+        db.close()
+
+        login_response = client.post(
+            "/auth/login", json={"email": email, "password": password}
+        )
+
+        assert login_response.status_code == 200
+        assert login_response.json()["code"] == 0
+
+        token = login_response.json()["data"]["access_token"]
+        return {"Authorization": f"Bearer {token}"}
+
+    return create_merchant_headers

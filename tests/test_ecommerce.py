@@ -6,15 +6,15 @@ from tests.conftest import TestingSessionLocal
 
 
 # ================ RBAC 测试 ================
-def test_register_user_role_is_user(client):
-    """1. 普通用户注册后 role 为 USER。"""
+def test_register_user_role_is_customer(client):
+    """1. 普通用户注册后 role 为 CUSTOMER。"""
     response = client.post(
         "/auth/register",
         json={"name": "Tom", "email": "tom@example.com", "password": "12345678"},
     )
     assert response.status_code == 200
     data = response.json()["data"]
-    assert data["role"] == "user"
+    assert data["role"] == "customer"
 
 
 def test_normal_user_cannot_access_admin(client, auth_headers):

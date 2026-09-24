@@ -17,7 +17,7 @@
 from app.core.security import create_access_token
 from tests.factories.product_factory import create_test_product
 from tests.factories.sku_factory import create_test_sku
-from tests.factories.user_factory import create_test_user
+from tests.factories.user_factory import create_test_merchant, create_test_user
 
 
 def _auth(token: str) -> dict:
@@ -26,8 +26,15 @@ def _auth(token: str) -> dict:
 
 
 def _create_sku(db_session, sku_code="CART-SKU-1", price="99.00", stock=100) -> int:
-    """用 factory 直接写库创建 product + sku，返回 sku_id。"""
-    product = create_test_product(db_session, name=f"Product-{sku_code}")
+    """用 factory 直接写库创建 merchant + product + sku，返回 sku_id。"""
+    # 商品归属商家（三角色体系后 Product.merchant_id 非空）；
+    # 用 sku_code 拼邮箱避免同一测试内多次创建商家时邮箱冲突
+    merchant = create_test_merchant(
+        db_session, email=f"merchant-{sku_code}@example.com"
+    )
+    product = create_test_product(
+        db_session, merchant_id=merchant.id, name=f"Product-{sku_code}"
+    )
     sku = create_test_sku(
         db_session,
         product_id=product.id,
